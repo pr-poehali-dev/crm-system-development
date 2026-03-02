@@ -218,6 +218,10 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
   const [newSubName, setNewSubName] = useState('');
   const [newSubAddress, setNewSubAddress] = useState('');
   const [newSubPhone, setNewSubPhone] = useState('');
+  const [newSubContract, setNewSubContract] = useState('');
+  const [newSubLogin, setNewSubLogin] = useState('');
+  const [newSubPassword, setNewSubPassword] = useState('');
+  const [newSubGroup, setNewSubGroup] = useState('Физические лица');
   const [createLoading, setCreateLoading] = useState(false);
   const [createResult, setCreateResult] = useState<string>('');
 
@@ -268,8 +272,8 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
   };
 
   const handleCreateSubscriber = async () => {
-    if (!newSubName || !newSubAddress || !tariffId) {
-      setCreateResult('Заполните ФИО, адрес и тариф');
+    if (!newSubName || !newSubAddress || !tariffId || !newSubGroup) {
+      setCreateResult('Заполните ФИО, адрес, тариф и группу');
       return;
     }
     setCreateLoading(true);
@@ -279,6 +283,10 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
       address: newSubAddress,
       phone: newSubPhone,
       tariffId,
+      contractNumber: newSubContract,
+      login: newSubLogin,
+      password: newSubPassword,
+      group: newSubGroup,
     });
     setCreateLoading(false);
     if (result.success) {
@@ -391,19 +399,36 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
             Новый абонент — будет создан в LightBilling
           </div>
           <div>
-            <label className={labelCls}>ФИО</label>
+            <label className={labelCls}>Группа *</label>
+            <select value={newSubGroup} onChange={(e) => setNewSubGroup(e.target.value)} className={selectCls}>
+              <option value="Физические лица">Физические лица</option>
+              <option value="Юридические лица">Юридические лица</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>ФИО *</label>
             <input value={newSubName} onChange={(e) => setNewSubName(e.target.value)} className={inputCls} placeholder="Фамилия Имя Отчество" />
           </div>
           <div>
-            <label className={labelCls}>Адрес подключения</label>
+            <label className={labelCls}>Адрес подключения *</label>
             <input value={newSubAddress} onChange={(e) => setNewSubAddress(e.target.value)} className={inputCls} placeholder="Улица, дом, квартира" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Договор / Логин</label>
+              <input value={newSubContract} onChange={(e) => setNewSubContract(e.target.value)} className={inputCls} placeholder="Номер договора" />
+            </div>
+            <div>
+              <label className={labelCls}>Пароль</label>
+              <input value={newSubLogin} onChange={(e) => setNewSubLogin(e.target.value)} className={inputCls} placeholder="Авто если пусто" />
+            </div>
           </div>
           <div>
             <label className={labelCls}>Телефон</label>
             <input value={newSubPhone} onChange={(e) => setNewSubPhone(e.target.value)} className={inputCls} placeholder="+7..." />
           </div>
           <div>
-            <label className={labelCls}>Тариф</label>
+            <label className={labelCls}>Тариф *</label>
             {!tariffsLoaded ? (
               <div className="flex items-center gap-2 text-xs text-[#4b5568] py-2">
                 <Icon name="Loader" size={12} className="animate-spin" />Загрузка тарифов...
@@ -417,7 +442,7 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
           </div>
           <button
             onClick={handleCreateSubscriber}
-            disabled={createLoading || !newSubName || !tariffId}
+            disabled={createLoading || !newSubName || !newSubAddress || !tariffId || !newSubGroup}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
           >
             {createLoading

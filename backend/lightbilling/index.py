@@ -480,6 +480,9 @@ def handler(event: dict, context) -> dict:
             phone = body.get("phone", "")
             tariff_id = body.get("tariffId", "")
             contract = body.get("contractNumber", "")
+            login = body.get("login", "")
+            password = body.get("password", "")
+            group = body.get("group", "Физические лица")
             
             if not full_name:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "ФИО обязательно"})}
@@ -490,17 +493,25 @@ def handler(event: dict, context) -> dict:
             first_name = parts[1] if len(parts) > 1 else ""
             middle_name = parts[2] if len(parts) > 2 else ""
             
-            post_data = urllib.parse.urlencode({
+            post_fields = {
                 "last_name": last_name,
                 "first_name": first_name,
                 "middle_name": middle_name,
                 "address": address,
                 "phone": phone,
                 "tariff": tariff_id,
-                "contract": contract,
+                "group": group,
                 "action": "add",
-                "page": "users/add",
-            }).encode("utf-8")
+                "page": "users/edit",
+            }
+            if contract:
+                post_fields["contract"] = contract
+            if login:
+                post_fields["login"] = login
+            if password:
+                post_fields["password"] = password
+            
+            post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
             
             req = urllib.request.Request(
                 LB_BASE,
@@ -510,7 +521,7 @@ def handler(event: dict, context) -> dict:
             req.add_header("Cookie", get_cookies())
             req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             req.add_header("Content-Type", "application/x-www-form-urlencoded")
-            req.add_header("Referer", LB_BASE + "?page=users/add")
+            req.add_header("Referer", LB_BASE + "?page=users/edit")
             
             with urllib.request.urlopen(req, timeout=15) as resp:
                 result_html = resp.read().decode("utf-8", errors="replace")

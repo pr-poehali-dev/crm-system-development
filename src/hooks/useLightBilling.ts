@@ -120,6 +120,9 @@ export function useLightBilling(): UseLBReturn {
     phone: string;
     tariffId: string;
     contractNumber?: string;
+    login?: string;
+    password?: string;
+    group?: string;
   }): Promise<LBCreateResult> => {
     try {
       const res = await fetch(`${LB_URL}?action=create_subscriber`, {
