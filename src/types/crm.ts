@@ -262,6 +262,32 @@ export interface Subscriber {
   ipAddress?: string;
 }
 
+export type CashPaymentType = 'subscriber_payment' | 'sale' | 'collection' | 'expense' | 'refund';
+
+export interface CashPayment {
+  id: string;
+  officeId: string;
+  cashRegisterId: string;
+  type: CashPaymentType;
+  amount: number;
+  direction: 'in' | 'out';
+  description: string;
+  subscriberId?: string;
+  subscriberName?: string;
+  saleId?: string;
+  expenseCategoryId?: string;
+  comment?: string;
+  employeeId?: string;
+  date: string;
+  createdAt: string;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface SalaryRecord {
   id: string;
   officeId: string;

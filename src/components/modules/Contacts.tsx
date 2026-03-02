@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCRMStore } from '@/store/crmStore';
-import { Subscriber } from '@/types/crm';
+import { Subscriber, CashRegister } from '@/types/crm';
 import Icon from '@/components/ui/icon';
 import { useLightBilling, LBSubscriber } from '@/hooks/useLightBilling';
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+const inputCls = "w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors";
+const selectCls = `${inputCls} cursor-pointer`;
 
 const STATUS_LABELS: Record<Subscriber['status'], string> = { active: 'Активен', suspended: 'Приостановлен', terminated: 'Отключён' };
 const STATUS_COLORS: Record<Subscriber['status'], string> = { active: 'bg-[#10b981]/20 text-[#10b981]', suspended: 'bg-[#f59e0b]/20 text-[#f59e0b]', terminated: 'bg-[#ef4444]/20 text-[#ef4444]' };
@@ -11,6 +15,56 @@ interface Props {
   onOpenPanel: (title: string, content: React.ReactNode) => void;
   onClosePanel: () => void;
   onCreateTicket?: (sub: { name: string; address: string; phone: string; lbId?: string; contract?: string }) => void;
+}
+
+interface TopupFormProps {
+  sub: Subscriber;
+  registers: CashRegister[];
+  onSave: (cashRegisterId: string, amount: number) => void;
+  onCancel: () => void;
+}
+
+function TopupForm({ sub, registers, onSave, onCancel }: TopupFormProps) {
+  const [cashRegisterId, setCashRegisterId] = useState(registers[0]?.id || '');
+  const [amount, setAmount] = useState('');
+  const presets = [100, 200, 300, 500, 1000];
+  return (
+    <div className="space-y-4">
+      <div className={`rounded-xl p-3 text-center ${sub.balance >= 0 ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+        <div className="text-xs text-muted-foreground mb-1">Текущий баланс</div>
+        <div className={`text-2xl font-bold ${sub.balance >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+          {sub.balance >= 0 ? '+' : ''}{sub.balance.toLocaleString('ru-RU')} ₽
+        </div>
+      </div>
+      <div><label className="block text-xs font-medium text-muted-foreground mb-1.5">Касса</label>
+        <select value={cashRegisterId} onChange={(e) => setCashRegisterId(e.target.value)} className={selectCls}>
+          {registers.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
+      </div>
+      <div><label className="block text-xs font-medium text-muted-foreground mb-1.5">Сумма пополнения, ₽</label>
+        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} placeholder="0" min="0" />
+        <div className="flex gap-2 mt-2 flex-wrap">
+          {presets.map((p) => (
+            <button key={p} onClick={() => setAmount(String(p))} className="px-3 py-1 bg-muted hover:bg-accent rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors">{p} ₽</button>
+          ))}
+        </div>
+      </div>
+      {amount && parseFloat(amount) > 0 && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 text-center">
+          <div className="text-xs text-muted-foreground">Баланс после пополнения</div>
+          <div className="text-xl font-bold text-emerald-500">+{(sub.balance + parseFloat(amount)).toLocaleString('ru-RU')} ₽</div>
+        </div>
+      )}
+      <div className="flex gap-3 pt-4 border-t border-border">
+        <button
+          onClick={() => { const a = parseFloat(amount); if (a > 0) onSave(cashRegisterId, a); }}
+          disabled={!amount || parseFloat(amount) <= 0}
+          className="flex-1 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+        >Пополнить баланс</button>
+        <button onClick={onCancel} className="px-4 py-2 bg-muted text-muted-foreground rounded-lg text-sm">Отмена</button>
+      </div>
+    </div>
+  );
 }
 
 function lbToSubscriber(lb: LBSubscriber): Subscriber {
@@ -30,7 +84,7 @@ function lbToSubscriber(lb: LBSubscriber): Subscriber {
 }
 
 export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: Props) {
-  const { subscribers: localSubs } = useCRMStore();
+  const { subscribers: localSubs, cashRegisters, currentOfficeId, addCashPayment, updateSubscriber } = useCRMStore();
   const lb = useLightBilling();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | Subscriber['status']>('all');
@@ -63,6 +117,36 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
     return true;
   });
 
+  const offRegisters = cashRegisters.filter((r) => r.officeId === currentOfficeId);
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const openTopup = (sub: Subscriber) => {
+    onOpenPanel(`Пополнение: ${sub.fullName}`, (
+      <TopupForm
+        sub={sub}
+        registers={offRegisters}
+        onSave={(cashRegisterId, amount) => {
+          addCashPayment({
+            id: uid(),
+            officeId: currentOfficeId,
+            cashRegisterId,
+            type: 'subscriber_payment',
+            amount,
+            direction: 'in',
+            description: `Пополнение баланса: ${sub.fullName} (${sub.contractNumber})`,
+            subscriberId: sub.id,
+            subscriberName: sub.fullName,
+            date: todayStr,
+            createdAt: new Date().toISOString(),
+          });
+          updateSubscriber(sub.id, { balance: sub.balance + amount });
+          onClosePanel();
+        }}
+        onCancel={onClosePanel}
+      />
+    ));
+  };
+
   const openCard = (sub: Subscriber) => {
     const lbSub = lb.subscribers.find((s) => (s.id || s.lb_id) === sub.id);
     onOpenPanel(sub.fullName, (
@@ -73,6 +157,7 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
           onClosePanel();
           onCreateTicket({ name: sub.fullName, address: sub.address, phone: sub.phone, lbId: lbSub?.lb_id, contract: sub.contractNumber });
         } : undefined}
+        onTopup={() => openTopup(sub)}
       />
     ));
   };
@@ -230,41 +315,43 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
 
 function InfoRow({ label, value, highlight }: { label: string; value: React.ReactNode; highlight?: boolean }) {
   return (
-    <div className="flex items-start justify-between py-2.5 border-b border-[#252d3d] last:border-0">
-      <span className="text-xs text-[#4b5568] flex-shrink-0 w-36">{label}</span>
-      <span className={`text-sm text-right ${highlight ? 'font-semibold text-white' : 'text-[#8892a4]'}`}>{value}</span>
+    <div className="flex items-start justify-between py-2.5 border-b border-border last:border-0">
+      <span className="text-xs text-muted-foreground flex-shrink-0 w-36">{label}</span>
+      <span className={`text-sm text-right ${highlight ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{value}</span>
     </div>
   );
 }
 
-function SubscriberCard({ sub, lbId, onCreateTicket }: { sub: Subscriber; lbId?: string; onCreateTicket?: () => void }) {
+function SubscriberCard({ sub, lbId, onCreateTicket, onTopup }: { sub: Subscriber; lbId?: string; onCreateTicket?: () => void; onTopup?: () => void }) {
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 pb-4 border-b border-[#252d3d]">
-        <div className="w-14 h-14 rounded-full bg-[#3b82f6]/20 flex items-center justify-center text-xl font-bold text-[#3b82f6]">
+      <div className="flex items-center gap-3 pb-4 border-b border-border">
+        <div className="w-14 h-14 rounded-full bg-primary/20 flex items-center justify-center text-xl font-bold text-primary">
           {sub.fullName.split(' ').map((n) => n[0]).slice(0, 2).join('')}
         </div>
         <div>
-          <h2 className="text-base font-bold text-white">{sub.fullName}</h2>
+          <h2 className="text-base font-bold text-foreground">{sub.fullName}</h2>
           <div className="flex items-center gap-2 mt-1">
-            <span className={`text-xs px-2 py-0.5 rounded-full ${
-              sub.status === 'active' ? 'bg-[#10b981]/20 text-[#10b981]' :
-              sub.status === 'suspended' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' :
-              'bg-[#ef4444]/20 text-[#ef4444]'
-            }`}>{STATUS_LABELS[sub.status]}</span>
-            <span className="text-xs text-[#4b5568]">{sub.contractNumber}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[sub.status]}`}>{STATUS_LABELS[sub.status]}</span>
+            <span className="text-xs text-muted-foreground">{sub.contractNumber}</span>
           </div>
         </div>
       </div>
 
-      <div className={`rounded-xl p-4 text-center ${sub.balance >= 0 ? 'bg-[#10b981]/10 border border-[#10b981]/20' : 'bg-[#ef4444]/10 border border-[#ef4444]/20'}`}>
-        <div className="text-xs text-[#4b5568] mb-1">Баланс</div>
-        <div className={`text-3xl font-bold ${sub.balance >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+      <div className={`rounded-xl p-4 text-center ${sub.balance >= 0 ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+        <div className="text-xs text-muted-foreground mb-1">Баланс</div>
+        <div className={`text-3xl font-bold ${sub.balance >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
           {sub.balance >= 0 ? '+' : ''}{sub.balance.toLocaleString('ru-RU')} ₽
         </div>
+        <button
+          onClick={onTopup}
+          className="mt-3 flex items-center justify-center gap-2 w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          <Icon name="Plus" size={14} />Пополнить баланс
+        </button>
       </div>
 
-      <div className="bg-[#0f1117] border border-[#252d3d] rounded-xl px-4 py-2">
+      <div className="bg-muted/50 border border-border rounded-xl px-4 py-2">
         <InfoRow label="Телефон" value={sub.phone} highlight />
         {sub.email && <InfoRow label="Email" value={sub.email} />}
         <InfoRow label="Адрес" value={sub.address} highlight />
@@ -274,26 +361,26 @@ function SubscriberCard({ sub, lbId, onCreateTicket }: { sub: Subscriber; lbId?:
       </div>
 
       {lbId && (
-        <div className="flex items-center gap-2 text-xs text-[#4b5568] bg-[#1e2637] border border-[#252d3d] rounded-xl px-3 py-2">
-          <Icon name="Zap" size={12} className="text-[#3b82f6]" />
-          <span>LightBilling · ID: <span className="text-white font-mono">{lbId}</span></span>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted border border-border rounded-xl px-3 py-2">
+          <Icon name="Zap" size={12} className="text-primary" />
+          <span>LightBilling · ID: <span className="text-foreground font-mono">{lbId}</span></span>
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-2">
-        <button className="flex items-center justify-center gap-2 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors">
+        <button className="flex items-center justify-center gap-2 py-2 bg-muted hover:bg-accent text-muted-foreground hover:text-foreground rounded-lg text-xs transition-colors">
           <Icon name="Phone" size={13} />Позвонить
         </button>
         <button
           onClick={onCreateTicket}
-          className="flex items-center justify-center gap-2 py-2 bg-[#3b82f6]/10 hover:bg-[#3b82f6]/20 text-[#3b82f6] rounded-lg text-xs transition-colors border border-[#3b82f6]/20"
+          className="flex items-center justify-center gap-2 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs transition-colors border border-primary/20"
         >
           <Icon name="FileText" size={13} />Создать заявку
         </button>
         {lbId && (
           <button
             onClick={() => window.open(`https://api.lightbilling.cloud/manager/?page=users/view&id=${lbId}`, '_blank')}
-            className="col-span-2 flex items-center justify-center gap-2 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors"
+            className="col-span-2 flex items-center justify-center gap-2 py-2 bg-muted hover:bg-accent text-muted-foreground hover:text-foreground rounded-lg text-xs transition-colors"
           >
             <Icon name="ExternalLink" size={13} />Открыть в LightBilling
           </button>

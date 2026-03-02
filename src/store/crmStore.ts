@@ -5,6 +5,7 @@ import {
   Connection, ServiceTicket, PaidCall, CalendarSlotSettings,
   Warehouse, Category, Product, StockOperation, WarehouseStock,
   CashRegister, Sale, WorkAct, Subscriber, SalarySheet, CRMEvent,
+  CashPayment, ExpenseCategory,
 } from '../types/crm';
 
 interface CRMState {
@@ -24,6 +25,8 @@ interface CRMState {
   stockOperations: StockOperation[];
   warehouseStock: WarehouseStock[];
   cashRegisters: CashRegister[];
+  cashPayments: CashPayment[];
+  expenseCategories: ExpenseCategory[];
   sales: Sale[];
   workActs: WorkAct[];
   subscribers: Subscriber[];
@@ -81,6 +84,12 @@ interface CRMState {
   addCashRegister: (cr: CashRegister) => void;
   updateCashRegister: (id: string, data: Partial<CashRegister>) => void;
   deleteCashRegister: (id: string) => void;
+
+  addCashPayment: (payment: CashPayment) => void;
+
+  addExpenseCategory: (cat: ExpenseCategory) => void;
+  updateExpenseCategory: (id: string, data: Partial<ExpenseCategory>) => void;
+  deleteExpenseCategory: (id: string) => void;
 
   addSale: (sale: Sale) => void;
   updateSale: (id: string, data: Partial<Sale>) => void;
@@ -176,6 +185,15 @@ const INIT_CASH_REGISTERS: CashRegister[] = [
   { id: '2', officeId: '2', name: 'Касса 1 (Шушенское)', isActive: true },
 ];
 
+const INIT_EXPENSE_CATEGORIES: ExpenseCategory[] = [
+  { id: '1', name: 'Аренда', description: 'Аренда помещений' },
+  { id: '2', name: 'Зарплата', description: 'Выплаты сотрудникам' },
+  { id: '3', name: 'Хозяйственные нужды', description: 'Расходы на офис' },
+  { id: '4', name: 'Транспорт', description: 'Топливо, ремонт авто' },
+  { id: '5', name: 'Связь', description: 'Телефония, интернет' },
+  { id: '6', name: 'Оборудование', description: 'Закупка оборудования' },
+];
+
 const INIT_WAREHOUSES: Warehouse[] = [
   { id: '1', officeId: '1', name: 'Основной склад', address: 'г. Абакан, ул. Ленина 1', description: 'Главный склад Абакан' },
   { id: '2', officeId: '2', name: 'Склад Шушенское', address: 'пгт. Шушенское, ул. Советская 5', description: 'Склад Шушенское' },
@@ -220,6 +238,8 @@ export const useCRMStore = create<CRMState>()(
       stockOperations: [],
       warehouseStock: [],
       cashRegisters: INIT_CASH_REGISTERS,
+      cashPayments: [],
+      expenseCategories: INIT_EXPENSE_CATEGORIES,
       sales: INIT_SALES,
       workActs: INIT_WORK_ACTS,
       subscribers: INIT_SUBSCRIBERS,
@@ -298,6 +318,12 @@ export const useCRMStore = create<CRMState>()(
       addCashRegister: (cr) => set((s) => ({ cashRegisters: [...s.cashRegisters, cr] })),
       updateCashRegister: (id, data) => set((s) => ({ cashRegisters: s.cashRegisters.map((c) => c.id === id ? { ...c, ...data } : c) })),
       deleteCashRegister: (id) => set((s) => ({ cashRegisters: s.cashRegisters.filter((c) => c.id !== id) })),
+
+      addCashPayment: (payment) => set((s) => ({ cashPayments: [...s.cashPayments, payment] })),
+
+      addExpenseCategory: (cat) => set((s) => ({ expenseCategories: [...s.expenseCategories, cat] })),
+      updateExpenseCategory: (id, data) => set((s) => ({ expenseCategories: s.expenseCategories.map((c) => c.id === id ? { ...c, ...data } : c) })),
+      deleteExpenseCategory: (id) => set((s) => ({ expenseCategories: s.expenseCategories.filter((c) => c.id !== id) })),
 
       addSale: (sale) => set((s) => ({ sales: [...s.sales, sale] })),
       updateSale: (id, data) => set((s) => ({ sales: s.sales.map((sale) => sale.id === id ? { ...sale, ...data } : sale) })),

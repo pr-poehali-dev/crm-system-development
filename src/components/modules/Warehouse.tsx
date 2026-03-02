@@ -26,7 +26,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function Warehouse({ onOpenPanel, onClosePanel }: Props) {
-  const { currentOfficeId, warehouses, categories, products, stockOperations, warehouseStock, employees, addWarehouse, updateWarehouse, deleteWarehouse, addCategory, deleteCategory, addProduct, updateProduct, deleteProduct, addStockOperation } = useCRMStore();
+  const { currentOfficeId, warehouses, categories, products, stockOperations, warehouseStock, employees, sales, cashRegisters, addWarehouse, updateWarehouse, deleteWarehouse, addCategory, deleteCategory, addProduct, updateProduct, deleteProduct, addStockOperation, updateSale, addCashPayment } = useCRMStore();
   const [tab, setTab] = useState<Tab>('stock');
 
   const offWarehouses = warehouses.filter((w) => w.officeId === currentOfficeId);
@@ -144,6 +144,71 @@ export default function Warehouse({ onOpenPanel, onClosePanel }: Props) {
     ));
   };
 
+  const offRegisters = cashRegisters.filter((r) => r.officeId === currentOfficeId);
+  const offSales = sales.filter((s) => s.officeId === currentOfficeId && s.status === 'completed');
+
+  const openSaleReturnForm = () => {
+    let selectedSaleId = offSales[0]?.id || '';
+    let cashRegisterId = offRegisters[0]?.id || '';
+    let notes = '';
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const save = () => {
+      const sale = sales.find((s) => s.id === selectedSaleId);
+      if (!sale) return;
+      updateSale(sale.id, { status: 'refunded' });
+      const warehouseId = warehouses.find((w) => w.officeId === currentOfficeId)?.id;
+      if (warehouseId) {
+        sale.items.forEach((item) => {
+          addStockOperation({
+            id: uid(), officeId: currentOfficeId, warehouseId, type: 'return',
+            productId: item.productId, quantity: item.quantity, price: item.price,
+            amount: item.amount, employeeId: '', date: todayStr,
+            notes: `Возврат по продаже #${sale.id}${notes ? ': ' + notes : ''}`,
+            createdAt: new Date().toISOString(),
+          });
+        });
+      }
+      addCashPayment({
+        id: uid(), officeId: currentOfficeId, cashRegisterId, type: 'refund',
+        amount: sale.totalAmount, direction: 'out',
+        description: `Возврат товара: ${sale.items.map((i) => i.productName).join(', ')} (${sale.customerName})`,
+        comment: notes, date: todayStr, createdAt: new Date().toISOString(),
+      });
+      onClosePanel();
+    };
+
+    onOpenPanel('Возврат товара', (
+      <div className="space-y-4">
+        <Field label="Выберите продажу для возврата">
+          <select defaultValue={selectedSaleId} onChange={(e) => { selectedSaleId = e.target.value; }} className={selectCls}>
+            <option value="">Выбрать продажу...</option>
+            {offSales.slice().reverse().map((s) => (
+              <option key={s.id} value={s.id}>
+                {new Date(s.date).toLocaleDateString('ru-RU')} · {s.customerName || 'Клиент'} · {s.totalAmount.toLocaleString('ru-RU')} ₽
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Касса для выплаты">
+          <select defaultValue={cashRegisterId} onChange={(e) => { cashRegisterId = e.target.value; }} className={selectCls}>
+            {offRegisters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Причина возврата">
+          <input defaultValue="" onChange={(e) => { notes = e.target.value; }} className={inputCls} placeholder="Опишите причину возврата..." />
+        </Field>
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-500">
+          Деньги будут выплачены из выбранной кассы, товары вернутся на склад автоматически
+        </div>
+        <div className="flex gap-3 pt-4 border-t border-[#252d3d]">
+          <button onClick={save} className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">Провести возврат</button>
+          <button onClick={onClosePanel} className="px-4 py-2 bg-[#1e2637] text-[#8892a4] rounded-lg text-sm">Отмена</button>
+        </div>
+      </div>
+    ));
+  };
+
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'stock', label: 'Остатки', icon: 'BarChart3' },
     { id: 'products', label: 'Товары', icon: 'Tag' },
@@ -165,12 +230,15 @@ export default function Warehouse({ onOpenPanel, onClosePanel }: Props) {
       {tab === 'stock' && (
         <div className="space-y-4">
           <div className="flex gap-2 flex-wrap">
-            {(['receipt', 'writeoff', 'transfer', 'return'] as const).map((type) => (
+            {(['receipt', 'writeoff', 'transfer'] as const).map((type) => (
               <button key={type} onClick={() => openOperationForm(type)} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-sm transition-colors">
-                <Icon name={type === 'receipt' ? 'ArrowDown' : type === 'writeoff' ? 'Trash2' : type === 'transfer' ? 'ArrowLeftRight' : 'ArrowUp'} size={13} className={OP_COLORS[type]} />
+                <Icon name={type === 'receipt' ? 'ArrowDown' : type === 'writeoff' ? 'Trash2' : 'ArrowLeftRight'} size={13} className={OP_COLORS[type]} />
                 {OP_TYPES[type]}
               </button>
             ))}
+            <button onClick={openSaleReturnForm} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded-lg text-sm transition-colors">
+              <Icon name="RotateCcw" size={13} />Возврат товара
+            </button>
           </div>
           {offWarehouses.map((wh) => {
             const stocks = warehouseStock.filter((s) => s.warehouseId === wh.id && s.quantity > 0);
