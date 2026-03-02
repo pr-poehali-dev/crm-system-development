@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useCRMStore } from '@/store/crmStore';
 import Icon from '@/components/ui/icon';
+import { useTheme } from '@/contexts/ThemeContext';
 
 type Module =
   | 'dashboard'
@@ -47,6 +48,7 @@ interface Props {
 
 export default function CRMLayout({ activeModule, onModuleChange, children, rightPanel, rightPanelTitle, onCloseRightPanel }: Props) {
   const { offices, currentOfficeId, setCurrentOffice } = useCRMStore();
+  const { theme, toggleTheme } = useTheme();
   const [officeDropdown, setOfficeDropdown] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const currentOffice = offices.find((o) => o.id === currentOfficeId);
@@ -208,6 +210,13 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
             </button>
             <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
               <Icon name="Search" size={16} />
+            </button>
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+            >
+              <Icon name={theme === 'dark' ? 'Sun' : 'Moon'} size={16} />
             </button>
           </div>
         </header>
