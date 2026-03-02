@@ -181,7 +181,7 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
 
                   if (!slotDef) {
                     return (
-                      <div key={day.toISOString()} className={`border-l border-[#252d3d] min-h-[72px] ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27]'}`} />
+                      <div key={day.toISOString()} className={`border-l border-[#252d3d] h-[88px] overflow-hidden ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27]'}`} />
                     );
                   }
 
@@ -189,38 +189,37 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
                   const freeSlots = slotDef.brigades - connsHere.length;
 
                   return (
-                    <div key={day.toISOString()} className={`border-l border-[#252d3d] p-1.5 min-h-[72px] ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27] hover:bg-[#1e2637]'} transition-colors`}>
+                    <div key={day.toISOString()} className={`border-l border-[#252d3d] h-[88px] overflow-hidden flex flex-col p-1.5 ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27] hover:bg-[#1e2637]'} transition-colors`}>
                       {/* Brigades capacity */}
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center justify-between mb-1 flex-shrink-0">
                         <span className={`text-[10px] font-medium ${freeSlots > 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
                           {freeSlots > 0 ? `${freeSlots} св.` : 'Занято'}
                         </span>
                         {freeSlots > 0 && (
                           <button
                             onClick={() => openConnectionForm(ds, slotDef)}
-                            className="w-5 h-5 rounded flex items-center justify-center bg-[#3b82f6]/20 hover:bg-[#3b82f6] text-[#3b82f6] hover:text-white transition-colors"
+                            className="w-5 h-5 rounded flex items-center justify-center bg-[#3b82f6]/20 hover:bg-[#3b82f6] text-[#3b82f6] hover:text-white transition-colors flex-shrink-0"
                             title="Добавить подключение"
                           >
                             <Icon name="Plus" size={10} />
                           </button>
                         )}
                       </div>
-                      {/* Connections */}
-                      {connsHere.map((conn) => {
-                        const st = STATUS_MAP[conn.status];
-                        return (
-                          <div
-                            key={conn.id}
-                            onClick={() => openConnectionForm(ds, slotDef, conn)}
-                            className={`${st.bg} rounded p-1.5 mb-1 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden`}
-                          >
-                            <div className={`text-xs font-medium ${st.color} truncate leading-tight w-full`}>{conn.subscriberName}</div>
-                            {conn.subscriberAddress && (
-                              <div className="text-[10px] text-[#4b5568] truncate w-full">{conn.subscriberAddress}</div>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {/* Connections — вписываются в ячейку */}
+                      <div className="overflow-hidden flex-1 min-h-0">
+                        {connsHere.map((conn) => {
+                          const st = STATUS_MAP[conn.status];
+                          return (
+                            <div
+                              key={conn.id}
+                              onClick={() => openConnectionForm(ds, slotDef, conn)}
+                              className={`${st.bg} rounded px-1 py-0.5 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity`}
+                            >
+                              <div className={`text-[10px] font-medium ${st.color} truncate leading-tight`}>{conn.subscriberName}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}

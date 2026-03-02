@@ -547,25 +547,21 @@ def handler(event: dict, context) -> dict:
                         return name
                 return None
 
-            f_last = find_field(["last", "surname", "фами", "lastname"]) or "last_name"
-            f_first = find_field(["first", "name", "имя", "firstname"]) or "first_name"
-            f_mid = find_field(["mid", "patron", "отч", "middle"]) or "middle_name"
+            # LB использует поле "name" для полного ФИО
+            f_name = find_field(["name", "имя", "фио"]) or "name"
             f_addr = find_field(["addr", "адр"]) or "address"
             f_phone = find_field(["phone", "тел", "mobile"]) or "phone"
-            f_tariff = find_field(["tariff", "тариф"]) or "tariff"
             f_contract = find_field(["contract", "договор", "dogovor"]) or "contract"
             f_login = find_field(["login", "логин", "user"]) or "login"
             f_pass = find_field(["pass", "пароль", "pwd"]) or "password"
             f_group = find_field(["group", "группа"]) or "group"
 
-            print(f"[create_subscriber] fields: last={f_last!r} first={f_first!r} addr={f_addr!r} tariff={f_tariff!r} group={f_group!r}")
+            print(f"[create_subscriber] fields: name={f_name!r} addr={f_addr!r} group={f_group!r}")
 
-            post_fields[f_last] = last_name
-            post_fields[f_first] = first_name
-            post_fields[f_mid] = middle_name
+            # Передаём ФИО целиком в поле name
+            post_fields[f_name] = full_name
             post_fields[f_addr] = address
             post_fields[f_phone] = phone
-            post_fields[f_tariff] = tariff_id
             if contract:
                 post_fields[f_contract] = contract
             if login_val:
@@ -618,9 +614,9 @@ def handler(event: dict, context) -> dict:
                     new_id = id_m.group(1)
                     print(f"[create_subscriber] got id from html: {new_id!r}")
 
-            # Последний шанс — ищем по договору/фамилии в списке
+            # Последний шанс — ищем по договору/имени в списке
             if not new_id:
-                search_params = {"limit": "20", "search": contract if contract else last_name}
+                search_params = {"limit": "20", "search": contract if contract else parts[0] if parts else full_name}
                 search_html = lb_request("", search_params)
                 subs = parse_subscribers_html(search_html)
                 for s in subs:
@@ -632,7 +628,7 @@ def handler(event: dict, context) -> dict:
                     if contract and s_contract == contract.strip():
                         new_id = s_id
                         break
-                    if last_name.lower() in s_name and (not first_name or first_name.lower() in s_name):
+                    if parts and parts[0].lower() in s_name:
                         new_id = s_id
                         break
                 if not new_id and subs:
@@ -640,12 +636,30 @@ def handler(event: dict, context) -> dict:
                     new_id = best.get("lb_id", "")
                 print(f"[create_subscriber] got id from search: {new_id!r}")
 
+            # Назначаем тариф отдельным запросом (тариф — отдельная страница в LB)
+            tariff_assigned = False
+            if new_id and tariff_id:
+                try:
+                    tariff_url = LB_BASE + f"?page=users/user-tariff&id={new_id}&id_tariff={tariff_id}&operation=add"
+                    print(f"[create_subscriber] assign tariff: GET {tariff_url}")
+                    req_tariff = urllib.request.Request(tariff_url)
+                    req_tariff.add_header("Cookie", get_cookies())
+                    req_tariff.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    req_tariff.add_header("Referer", LB_BASE + f"?page=users/view&id={new_id}")
+                    with urllib.request.urlopen(req_tariff, timeout=10) as r:
+                        tariff_resp = r.read().decode("utf-8", errors="replace")
+                    tariff_assigned = True
+                    print(f"[create_subscriber] tariff assigned, resp_len={len(tariff_resp)}")
+                except Exception as e:
+                    print(f"[create_subscriber] tariff assign failed: {e!r}")
+
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
                 "body": json.dumps({
                     "success": True,
                     "lb_id": new_id,
+                    "tariff_assigned": tariff_assigned,
                     "message": "Абонент создан" if new_id else "Абонент создан (ID не определён)",
                 }, ensure_ascii=False),
             }
