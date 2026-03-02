@@ -4,7 +4,7 @@ import {
   Office, Department, Position, Employee, User,
   Connection, ServiceTicket, PaidCall, CalendarSlotSettings,
   Warehouse, Category, Product, StockOperation, WarehouseStock,
-  CashRegister, Sale, WorkAct, Subscriber, SalarySheet,
+  CashRegister, Sale, WorkAct, Subscriber, SalarySheet, CRMEvent,
 } from '../types/crm';
 
 interface CRMState {
@@ -91,6 +91,11 @@ interface CRMState {
 
   addSubscriber: (sub: Subscriber) => void;
   updateSubscriber: (id: string, data: Partial<Subscriber>) => void;
+
+  events: CRMEvent[];
+  addEvent: (event: CRMEvent) => void;
+  updateEvent: (id: string, data: Partial<CRMEvent>) => void;
+  deleteEvent: (id: string) => void;
 
   addSalarySheet: (sheet: SalarySheet) => void;
   updateSalarySheet: (id: string, data: Partial<SalarySheet>) => void;
@@ -206,6 +211,7 @@ export const useCRMStore = create<CRMState>()(
       sales: INIT_SALES,
       workActs: INIT_WORK_ACTS,
       subscribers: INIT_SUBSCRIBERS,
+      events: [],
       salarySheets: [],
 
       setCurrentOffice: (id) => set({ currentOfficeId: id }),
@@ -290,6 +296,10 @@ export const useCRMStore = create<CRMState>()(
 
       addSubscriber: (sub) => set((s) => ({ subscribers: [...s.subscribers, sub] })),
       updateSubscriber: (id, data) => set((s) => ({ subscribers: s.subscribers.map((su) => su.id === id ? { ...su, ...data } : su) })),
+
+      addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
+      updateEvent: (id, data) => set((s) => ({ events: s.events.map((e) => e.id === id ? { ...e, ...data } : e) })),
+      deleteEvent: (id) => set((s) => ({ events: s.events.filter((e) => e.id !== id) })),
 
       addSalarySheet: (sheet) => set((s) => ({ salarySheets: [...s.salarySheets, sheet] })),
       updateSalarySheet: (id, data) => set((s) => ({ salarySheets: s.salarySheets.map((sh) => sh.id === id ? { ...sh, ...data } : sh) })),

@@ -23,14 +23,34 @@ export interface LBDetail {
   title: string;
 }
 
+export interface LBTariff {
+  id: string;
+  name: string;
+}
+
+export interface LBCreateResult {
+  success: boolean;
+  lb_id: string;
+  message: string;
+}
+
 interface UseLBReturn {
   loading: boolean;
   error: string | null;
   subscribers: LBSubscriber[];
   total: number;
+  tariffs: LBTariff[];
   searchSubscribers: (query: string, limit?: number) => Promise<void>;
   loadSubscribers: (limit?: number) => Promise<void>;
   getDetail: (id: string) => Promise<LBDetail | null>;
+  loadTariffs: () => Promise<LBTariff[]>;
+  createSubscriber: (data: {
+    fullName: string;
+    address: string;
+    phone: string;
+    tariffId: string;
+    contractNumber?: string;
+  }) => Promise<LBCreateResult>;
 }
 
 export function useLightBilling(): UseLBReturn {
@@ -38,16 +58,13 @@ export function useLightBilling(): UseLBReturn {
   const [error, setError] = useState<string | null>(null);
   const [subscribers, setSubscribers] = useState<LBSubscriber[]>([]);
   const [total, setTotal] = useState(0);
+  const [tariffs, setTariffs] = useState<LBTariff[]>([]);
 
   const fetchSubscribers = useCallback(async (search: string, limit = 100) => {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({
-        action: 'subscribers',
-        search,
-        limit: String(limit),
-      });
+      const params = new URLSearchParams({ action: 'subscribers', search, limit: String(limit) });
       const res = await fetch(`${LB_URL}?${params}`);
       const data = await res.json();
       if (data.error) {
@@ -57,7 +74,7 @@ export function useLightBilling(): UseLBReturn {
         setSubscribers(data.subscribers || []);
         setTotal(data.total || 0);
       }
-    } catch (e) {
+    } catch {
       setError('Ошибка соединения с LightBilling');
     } finally {
       setLoading(false);
@@ -85,5 +102,40 @@ export function useLightBilling(): UseLBReturn {
     }
   }, []);
 
-  return { loading, error, subscribers, total, searchSubscribers, loadSubscribers, getDetail };
+  const loadTariffs = useCallback(async (): Promise<LBTariff[]> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=tariffs`);
+      const data = await res.json();
+      const list: LBTariff[] = data.tariffs || [];
+      setTariffs(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const createSubscriber = useCallback(async (payload: {
+    fullName: string;
+    address: string;
+    phone: string;
+    tariffId: string;
+    contractNumber?: string;
+  }): Promise<LBCreateResult> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=create_subscriber`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      return data as LBCreateResult;
+    } catch {
+      return { success: false, lb_id: '', message: 'Ошибка соединения' };
+    }
+  }, []);
+
+  return {
+    loading, error, subscribers, total, tariffs,
+    searchSubscribers, loadSubscribers, getDetail, loadTariffs, createSubscriber,
+  };
 }

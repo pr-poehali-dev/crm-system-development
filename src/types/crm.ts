@@ -49,6 +49,34 @@ export type ConnectionStatus = 'scheduled' | 'in_progress' | 'done' | 'cancelled
 export type TicketStatus = 'new' | 'in_progress' | 'done' | 'cancelled';
 export type CallStatus = 'new' | 'in_progress' | 'done' | 'cancelled';
 
+export type EventType = 'breakdown' | 'connection' | 'paid_call';
+export type EventStatus = 'new' | 'in_progress' | 'done' | 'cancelled';
+
+export interface CRMEvent {
+  id: string;
+  officeId: string;
+  type: EventType;
+  status: EventStatus;
+  priority: 'low' | 'medium' | 'high';
+  subscriberId?: string;
+  subscriberLbId?: string;
+  subscriberName: string;
+  subscriberAddress: string;
+  subscriberPhone: string;
+  subscriberContract?: string;
+  technicianId: string;
+  date: string;
+  timeSlot?: string;
+  problem?: string;
+  amount?: number;
+  tariffId?: string;
+  tariffName?: string;
+  newLbId?: string;
+  notes: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 export interface CalendarSlotSettings {
   officeId: string;
   slotsPerDay: number;

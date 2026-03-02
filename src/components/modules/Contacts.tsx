@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useCRMStore } from '@/store/crmStore';
 import { Subscriber } from '@/types/crm';
 import Icon from '@/components/ui/icon';
-import { useLightBilling, LBSubscriber, LBDetail } from '@/hooks/useLightBilling';
+import { useLightBilling, LBSubscriber } from '@/hooks/useLightBilling';
 
 const STATUS_LABELS: Record<Subscriber['status'], string> = { active: 'Активен', suspended: 'Приостановлен', terminated: 'Отключён' };
 const STATUS_COLORS: Record<Subscriber['status'], string> = { active: 'bg-[#10b981]/20 text-[#10b981]', suspended: 'bg-[#f59e0b]/20 text-[#f59e0b]', terminated: 'bg-[#ef4444]/20 text-[#ef4444]' };
@@ -10,6 +10,7 @@ const STATUS_COLORS: Record<Subscriber['status'], string> = { active: 'bg-[#10b9
 interface Props {
   onOpenPanel: (title: string, content: React.ReactNode) => void;
   onClosePanel: () => void;
+  onCreateTicket?: (sub: { name: string; address: string; phone: string; lbId?: string; contract?: string }) => void;
 }
 
 function lbToSubscriber(lb: LBSubscriber): Subscriber {
@@ -28,7 +29,7 @@ function lbToSubscriber(lb: LBSubscriber): Subscriber {
   };
 }
 
-export default function Contacts({ onOpenPanel, onClosePanel }: Props) {
+export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: Props) {
   const { subscribers: localSubs } = useCRMStore();
   const lb = useLightBilling();
   const [search, setSearch] = useState('');
@@ -64,7 +65,16 @@ export default function Contacts({ onOpenPanel, onClosePanel }: Props) {
 
   const openCard = (sub: Subscriber) => {
     const lbSub = lb.subscribers.find((s) => (s.id || s.lb_id) === sub.id);
-    onOpenPanel(sub.fullName, <SubscriberCard sub={sub} lbId={lbSub?.lb_id} getDetail={lb.getDetail} />);
+    onOpenPanel(sub.fullName, (
+      <SubscriberCard
+        sub={sub}
+        lbId={lbSub?.lb_id}
+        onCreateTicket={onCreateTicket ? () => {
+          onClosePanel();
+          onCreateTicket({ name: sub.fullName, address: sub.address, phone: sub.phone, lbId: lbSub?.lb_id, contract: sub.contractNumber });
+        } : undefined}
+      />
+    ));
   };
 
   return (
@@ -227,19 +237,7 @@ function InfoRow({ label, value, highlight }: { label: string; value: React.Reac
   );
 }
 
-function SubscriberCard({ sub, lbId, getDetail }: { sub: Subscriber; lbId?: string; getDetail: (id: string) => Promise<LBDetail | null> }) {
-  const [detail, setDetail] = useState<LBDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  useEffect(() => {
-    if (!lbId) return;
-    setDetailLoading(true);
-    getDetail(lbId).then((d) => {
-      setDetail(d);
-      setDetailLoading(false);
-    });
-  }, [lbId]);
-
+function SubscriberCard({ sub, lbId, onCreateTicket }: { sub: Subscriber; lbId?: string; onCreateTicket?: () => void }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 pb-4 border-b border-[#252d3d]">
@@ -270,53 +268,32 @@ function SubscriberCard({ sub, lbId, getDetail }: { sub: Subscriber; lbId?: stri
         <InfoRow label="Телефон" value={sub.phone} highlight />
         {sub.email && <InfoRow label="Email" value={sub.email} />}
         <InfoRow label="Адрес" value={sub.address} highlight />
-        <InfoRow label="Тариф" value={sub.tariff} />
+        {sub.tariff && <InfoRow label="Тариф" value={sub.tariff} />}
         {sub.connectDate && <InfoRow label="Дата подключения" value={new Date(sub.connectDate).toLocaleDateString('ru-RU')} />}
         {sub.ipAddress && <InfoRow label="IP-адрес" value={<span className="font-mono text-xs">{sub.ipAddress}</span>} />}
       </div>
 
-      {/* LB Detail Fields */}
-      {detailLoading && (
-        <div className="flex items-center justify-center gap-2 py-4 text-xs text-[#4b5568]">
-          <Icon name="Loader" size={14} className="animate-spin" />
-          Загрузка деталей из LightBilling...
+      {lbId && (
+        <div className="flex items-center gap-2 text-xs text-[#4b5568] bg-[#1e2637] border border-[#252d3d] rounded-xl px-3 py-2">
+          <Icon name="Zap" size={12} className="text-[#3b82f6]" />
+          <span>LightBilling · ID: <span className="text-white font-mono">{lbId}</span></span>
         </div>
       )}
-      {detail && Object.keys(detail.fields).length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <Icon name="Zap" size={12} className="text-[#3b82f6]" />
-            <span className="text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Данные LightBilling</span>
-          </div>
-          <div className="bg-[#0f1117] border border-[#252d3d] rounded-xl px-4 py-2">
-            {Object.entries(detail.fields).slice(0, 15).map(([key, val]) => (
-              <InfoRow key={key} label={key} value={val} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="bg-[#1e2637] border border-[#252d3d] rounded-xl p-3 flex items-start gap-2">
-        <Icon name="Link" size={14} className="text-[#3b82f6] flex-shrink-0 mt-0.5" />
-        <div className="text-xs text-[#8892a4]">
-          {lbId
-            ? <>Данные синхронизированы с <span className="text-white font-medium">LightBilling</span> · ID: {lbId}</>
-            : <>Абонент из <span className="text-white font-medium">локальной базы</span> CRM</>
-          }
-        </div>
-      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <button className="flex items-center justify-center gap-2 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors">
           <Icon name="Phone" size={13} />Позвонить
         </button>
-        <button className="flex items-center justify-center gap-2 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors">
+        <button
+          onClick={onCreateTicket}
+          className="flex items-center justify-center gap-2 py-2 bg-[#3b82f6]/10 hover:bg-[#3b82f6]/20 text-[#3b82f6] rounded-lg text-xs transition-colors border border-[#3b82f6]/20"
+        >
           <Icon name="FileText" size={13} />Создать заявку
         </button>
         {lbId && (
           <button
             onClick={() => window.open(`https://api.lightbilling.cloud/manager/?page=users/view&id=${lbId}`, '_blank')}
-            className="col-span-2 flex items-center justify-center gap-2 py-2 bg-[#3b82f6]/10 hover:bg-[#3b82f6]/20 text-[#3b82f6] rounded-lg text-xs transition-colors border border-[#3b82f6]/20"
+            className="col-span-2 flex items-center justify-center gap-2 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors"
           >
             <Icon name="ExternalLink" size={13} />Открыть в LightBilling
           </button>

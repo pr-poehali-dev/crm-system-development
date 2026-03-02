@@ -5,9 +5,7 @@ import Icon from '@/components/ui/icon';
 type Module =
   | 'dashboard'
   | 'employees'
-  | 'service-calendar'
-  | 'service-tickets'
-  | 'paid-calls'
+  | 'events'
   | 'warehouse'
   | 'cash'
   | 'acts'
@@ -25,9 +23,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Главная', icon: 'LayoutDashboard' },
-  { id: 'service-calendar', label: 'Календарь', icon: 'CalendarDays', group: 'Сервис' },
-  { id: 'service-tickets', label: 'Заявки', icon: 'Wrench', group: 'Сервис' },
-  { id: 'paid-calls', label: 'Платные вызовы', icon: 'PhoneCall', group: 'Сервис' },
+  { id: 'events', label: 'Заявки', icon: 'ClipboardList', group: 'Сервис' },
   { id: 'warehouse', label: 'Склад', icon: 'Package', group: 'Склад' },
   { id: 'cash', label: 'Касса', icon: 'Receipt', group: 'Финансы' },
   { id: 'acts', label: 'Акты работ', icon: 'FileCheck', group: 'Финансы' },

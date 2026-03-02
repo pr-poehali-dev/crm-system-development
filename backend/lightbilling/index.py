@@ -442,6 +442,96 @@ def handler(event: dict, context) -> dict:
                 }, ensure_ascii=False),
             }
         
+        elif action == "tariffs":
+            # Получаем тарифы из select-фильтра на главной странице абонентов
+            html = lb_request("", {"group": "", "tariff": "0", "search": "", "limit": "1"})
+            if 'page=login' in html:
+                return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
+            
+            # Ищем select name="tariff"
+            tariffs = []
+            select_match = re.search(r'<select[^>]*name=["\']tariff["\'][^>]*>(.*?)</select>', html, re.DOTALL | re.IGNORECASE)
+            if select_match:
+                options = re.findall(r'<option[^>]*value=["\']?([^"\'>\s]*)["\']?[^>]*>\s*([^<\n\r]+)', select_match.group(1))
+                # Пропускаем системные опции (0, 1, 2, 3, 4, 5 — это фильтры, не реальные тарифы)
+                skip_ids = {"0", "1", "2", "3", "4", "5", ""}
+                for val, label in options:
+                    val = val.strip()
+                    label = label.strip()
+                    if val not in skip_ids and label:
+                        tariffs.append({"id": val, "name": label})
+            
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({"tariffs": tariffs, "total": len(tariffs)}, ensure_ascii=False),
+            }
+        
+        elif action == "create_subscriber":
+            # Создание нового абонента в LB
+            body_raw = event.get("body", "{}")
+            try:
+                body = json.loads(body_raw) if body_raw else {}
+            except:
+                body = {}
+            
+            full_name = body.get("fullName", "")
+            address = body.get("address", "")
+            phone = body.get("phone", "")
+            tariff_id = body.get("tariffId", "")
+            contract = body.get("contractNumber", "")
+            
+            if not full_name:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "ФИО обязательно"})}
+            
+            # Разбиваем ФИО
+            parts = full_name.split()
+            last_name = parts[0] if len(parts) > 0 else ""
+            first_name = parts[1] if len(parts) > 1 else ""
+            middle_name = parts[2] if len(parts) > 2 else ""
+            
+            post_data = urllib.parse.urlencode({
+                "last_name": last_name,
+                "first_name": first_name,
+                "middle_name": middle_name,
+                "address": address,
+                "phone": phone,
+                "tariff": tariff_id,
+                "contract": contract,
+                "action": "add",
+            }).encode("utf-8")
+            
+            req = urllib.request.Request(
+                LB_BASE + "?page=users/add",
+                data=post_data,
+                method="POST",
+            )
+            req.add_header("Cookie", get_cookies())
+            req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+            req.add_header("Referer", LB_BASE + "?page=users/add")
+            
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result_html = resp.read().decode("utf-8", errors="replace")
+            
+            # Извлекаем ID нового абонента из редиректа или страницы
+            new_id = ""
+            id_match = re.search(r'page=users/view&id=(\d+)', result_html)
+            if id_match:
+                new_id = id_match.group(1)
+            
+            success = bool(new_id) or "успешно" in result_html.lower() or "success" in result_html.lower()
+            
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "success": success,
+                    "lb_id": new_id,
+                    "message": "Абонент создан" if success else "Не удалось определить результат создания",
+                }, ensure_ascii=False),
+            }
+        
         else:
             return {
                 "statusCode": 400,
