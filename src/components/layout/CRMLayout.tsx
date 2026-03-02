@@ -61,16 +61,16 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
   const SidebarContent = () => (
     <>
       {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-[#252d3d] flex-shrink-0">
+      <div className="h-14 flex items-center px-4 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-2 flex-1">
-          <div className="w-7 h-7 rounded-lg bg-[#3b82f6] flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
             <Icon name="Zap" size={14} className="text-white" />
           </div>
-          <span className="font-semibold text-sm text-white">NetCRM</span>
+          <span className="font-semibold text-sm text-foreground">NetCRM</span>
         </div>
         {/* Close button — mobile only */}
         <button
-          className="md:hidden p-1.5 rounded-lg text-[#8892a4] hover:text-white"
+          className="md:hidden p-1.5 rounded-lg text-muted-foreground hover:text-foreground"
           onClick={() => setMobileMenuOpen(false)}
         >
           <Icon name="X" size={18} />
@@ -78,37 +78,37 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
       </div>
 
       {/* Office Switcher */}
-      <div className="px-3 py-3 border-b border-[#252d3d] relative flex-shrink-0">
+      <div className="px-3 py-3 border-b border-border relative flex-shrink-0">
         <button
           onClick={() => setOfficeDropdown(!officeDropdown)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1e2637] hover:bg-[#252d3d] transition-colors text-left group"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-accent transition-colors text-left group"
         >
-          <div className="w-6 h-6 rounded-md bg-[#3b82f6]/20 flex items-center justify-center flex-shrink-0">
-            <Icon name="Building2" size={12} className="text-[#3b82f6]" />
+          <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <Icon name="Building2" size={12} className="text-primary" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs text-[#8892a4] leading-none mb-0.5">Офис</div>
-            <div className="text-sm font-medium text-white truncate">{currentOffice?.name}</div>
+            <div className="text-xs text-muted-foreground leading-none mb-0.5">Офис</div>
+            <div className="text-sm font-medium text-foreground truncate">{currentOffice?.name}</div>
           </div>
-          <Icon name="ChevronsUpDown" size={14} className="text-[#8892a4] group-hover:text-white transition-colors flex-shrink-0" />
+          <Icon name="ChevronsUpDown" size={14} className="text-muted-foreground group-hover:text-foreground transition-colors flex-shrink-0" />
         </button>
 
         {officeDropdown && (
-          <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-[#1e2637] border border-[#252d3d] rounded-lg shadow-xl py-1">
+          <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-card border border-border rounded-lg shadow-xl py-1">
             {offices.map((office) => (
               <button
                 key={office.id}
                 onClick={() => { setCurrentOffice(office.id); setOfficeDropdown(false); }}
-                className={`w-full px-3 py-2 text-left text-sm hover:bg-[#252d3d] transition-colors flex items-center gap-2 ${office.id === currentOfficeId ? 'text-[#3b82f6]' : 'text-white'}`}
+                className={`w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2 ${office.id === currentOfficeId ? 'text-primary' : 'text-foreground'}`}
               >
                 <Icon name={office.id === currentOfficeId ? 'CheckCircle2' : 'Circle'} size={14} />
                 {office.name}
               </button>
             ))}
-            <div className="border-t border-[#252d3d] mt-1 pt-1">
+            <div className="border-t border-border mt-1 pt-1">
               <button
                 onClick={() => { handleModuleChange('settings'); setOfficeDropdown(false); }}
-                className="w-full px-3 py-2 text-left text-xs text-[#8892a4] hover:text-white hover:bg-[#252d3d] transition-colors flex items-center gap-2"
+                className="w-full px-3 py-2 text-left text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex items-center gap-2"
               >
                 <Icon name="Plus" size={12} />
                 Добавить офис
@@ -126,7 +126,7 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
           return (
             <div key={group} className="mb-1">
               {group && (
-                <div className="px-3 py-1.5 text-[10px] font-semibold text-[#4b5568] uppercase tracking-wider mt-2">{group}</div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mt-2">{group}</div>
               )}
               {items.map((item) => (
                 <button
@@ -134,8 +134,8 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
                   onClick={() => handleModuleChange(item.id)}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
                     activeModule === item.id
-                      ? 'bg-[#3b82f6] text-white font-medium shadow-lg shadow-blue-500/20'
-                      : 'text-[#8892a4] hover:text-white hover:bg-[#1e2637]'
+                      ? 'bg-primary text-white font-medium shadow-lg shadow-primary/20'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                   }`}
                 >
                   <Icon name={item.icon} size={15} />
@@ -148,14 +148,14 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
       </nav>
 
       {/* User */}
-      <div className="p-3 border-t border-[#252d3d] flex-shrink-0">
+      <div className="p-3 border-t border-border flex-shrink-0">
         <div className="flex items-center gap-2 px-2 py-1.5">
-          <div className="w-7 h-7 rounded-full bg-[#3b82f6] flex items-center justify-center text-xs font-semibold">А</div>
+          <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-xs font-semibold text-white">А</div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white truncate">Администратор</div>
-            <div className="text-xs text-[#4b5568]">admin</div>
+            <div className="text-sm font-medium text-foreground truncate">Администратор</div>
+            <div className="text-xs text-muted-foreground">admin</div>
           </div>
-          <button className="text-[#4b5568] hover:text-white transition-colors">
+          <button className="text-muted-foreground hover:text-foreground transition-colors">
             <Icon name="LogOut" size={14} />
           </button>
         </div>
@@ -167,7 +167,7 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
     <div className="flex h-screen bg-background text-foreground font-['Golos_Text'] overflow-hidden">
 
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-56 flex-shrink-0 bg-[#161b27] border-r border-[#252d3d] flex-col">
+      <aside className="hidden md:flex w-56 flex-shrink-0 bg-card border-r border-border flex-col">
         <SidebarContent />
       </aside>
 
@@ -178,7 +178,7 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
             className="absolute inset-0 bg-black/60"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="relative w-72 max-w-[85vw] bg-[#161b27] border-r border-[#252d3d] flex flex-col h-full z-10">
+          <aside className="relative w-72 max-w-[85vw] bg-card border-r border-border flex flex-col h-full z-10">
             <SidebarContent />
           </aside>
         </div>
