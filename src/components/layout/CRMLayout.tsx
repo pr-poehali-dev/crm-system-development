@@ -164,7 +164,7 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
   );
 
   return (
-    <div className="flex h-screen bg-[#0f1117] text-white font-['Golos_Text'] overflow-hidden">
+    <div className="flex h-screen bg-background text-foreground font-['Golos_Text'] overflow-hidden">
 
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex w-56 flex-shrink-0 bg-[#161b27] border-r border-[#252d3d] flex-col">
@@ -187,26 +187,26 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="h-14 bg-[#161b27] border-b border-[#252d3d] flex items-center px-4 gap-3 flex-shrink-0">
+        <header className="h-14 bg-card border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
           {/* Burger — mobile only */}
           <button
-            className="md:hidden p-2 rounded-lg hover:bg-[#1e2637] text-[#8892a4] hover:text-white transition-colors flex-shrink-0"
+            className="md:hidden p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
             onClick={() => setMobileMenuOpen(true)}
           >
             <Icon name="Menu" size={18} />
           </button>
 
           <div className="flex-1 min-w-0">
-            <h1 className="text-base font-semibold text-white truncate">
+            <h1 className="text-base font-semibold text-foreground truncate">
               {NAV_ITEMS.find((i) => i.id === activeModule)?.label || 'Главная'}
             </h1>
-            <div className="text-xs text-[#4b5568] truncate hidden sm:block">{currentOffice?.name} • {new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+            <div className="text-xs text-muted-foreground truncate hidden sm:block">{currentOffice?.name} • {new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button className="p-2 rounded-lg hover:bg-[#1e2637] transition-colors text-[#8892a4] hover:text-white">
+            <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
               <Icon name="Bell" size={16} />
             </button>
-            <button className="p-2 rounded-lg hover:bg-[#1e2637] transition-colors text-[#8892a4] hover:text-white">
+            <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
               <Icon name="Search" size={16} />
             </button>
           </div>
@@ -220,10 +220,10 @@ export default function CRMLayout({ activeModule, onModuleChange, children, righ
 
           {/* Right Panel — fullscreen on mobile, fixed width on desktop */}
           {rightPanel && (
-            <div className="fixed md:relative inset-0 md:inset-auto md:w-[420px] flex-shrink-0 bg-[#161b27] md:border-l border-[#252d3d] flex flex-col animate-slide-in-right z-40">
-              <div className="h-14 flex items-center px-5 border-b border-[#252d3d] flex-shrink-0">
-                <span className="font-semibold text-sm text-white flex-1 truncate">{rightPanelTitle || 'Детали'}</span>
-                <button onClick={onCloseRightPanel} className="p-1.5 rounded-lg hover:bg-[#252d3d] text-[#8892a4] hover:text-white transition-colors">
+            <div className="fixed md:relative inset-0 md:inset-auto md:w-[420px] flex-shrink-0 bg-card md:border-l border-border flex flex-col animate-slide-in-right z-40">
+              <div className="h-14 flex items-center px-5 border-b border-border flex-shrink-0">
+                <span className="font-semibold text-sm text-foreground flex-1 truncate">{rightPanelTitle || 'Детали'}</span>
+                <button onClick={onCloseRightPanel} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
                   <Icon name="X" size={16} />
                 </button>
               </div>
