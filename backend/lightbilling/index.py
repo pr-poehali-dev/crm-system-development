@@ -656,8 +656,10 @@ def handler(event: dict, context) -> dict:
             # Определяем URL для POST
             if form_action and form_action.startswith("http"):
                 post_url = form_action
+            elif form_action and form_action.startswith("?"):
+                post_url = LB_BASE + form_action
             elif form_action:
-                post_url = LB_BASE + form_action.lstrip("?")
+                post_url = LB_BASE + "?" + form_action
             else:
                 post_url = LB_BASE
 
