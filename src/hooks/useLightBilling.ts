@@ -58,7 +58,7 @@ interface UseLBReturn {
     tariffId: string;
     contractNumber?: string;
   }) => Promise<LBCreateResult>;
-  addPayment: (lbId: string, amount: number, comment?: string) => Promise<LBPaymentResult>;
+  addPayment: (lbId: string, amount: number, comment?: string, contract?: string) => Promise<LBPaymentResult>;
 }
 
 export function useLightBilling(): UseLBReturn {
@@ -145,12 +145,12 @@ export function useLightBilling(): UseLBReturn {
     }
   }, []);
 
-  const addPayment = useCallback(async (lbId: string, amount: number, comment = 'Пополнение баланса через CRM'): Promise<LBPaymentResult> => {
+  const addPayment = useCallback(async (lbId: string, amount: number, comment = 'Пополнение через CRM', contract?: string): Promise<LBPaymentResult> => {
     try {
       const res = await fetch(`${LB_URL}?action=add_payment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lb_id: lbId, amount, comment }),
+        body: JSON.stringify({ lb_id: lbId, contract, amount, comment }),
       });
       const data = await res.json();
       return data as LBPaymentResult;

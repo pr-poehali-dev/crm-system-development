@@ -134,22 +134,22 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
       )}
 
       {/* Calendar Grid */}
-      <div className="border border-[#252d3d] rounded-xl overflow-x-auto bg-white">
+      <div className="border border-[#252d3d] rounded-xl overflow-x-auto bg-[#161b27]">
         <div className="min-w-[700px]">
           {/* Header row: Время + дни */}
-          <div className="grid border-b border-gray-200" style={{ gridTemplateColumns: '72px repeat(7, 1fr)' }}>
-            <div className="px-3 py-3 text-xs text-gray-400 font-semibold uppercase bg-[#161b27] rounded-tl-xl">Время</div>
+          <div className="grid border-b border-[#252d3d]" style={{ gridTemplateColumns: '72px repeat(7, 1fr)' }}>
+            <div className="px-3 py-3 text-xs text-[#4b5568] font-semibold uppercase bg-[#0f1117] rounded-tl-xl">Время</div>
             {weekDays.map((day) => {
               const isToday = day.toDateString() === new Date().toDateString();
               const isWE = isWeekend(day);
               const ds = dateStr(day);
               const special = settings.specialDates?.find(sd => sd.date === ds);
               return (
-                <div key={day.toISOString()} className={`px-2 py-3 text-center border-l border-gray-200 last:rounded-tr-xl ${isWE ? 'bg-gray-100' : 'bg-white'}`}>
-                  <div className={`text-xs font-semibold uppercase ${isWE ? 'text-gray-400' : 'text-gray-500'}`}>
+                <div key={day.toISOString()} className={`px-2 py-3 text-center border-l border-[#252d3d] last:rounded-tr-xl ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27]'}`}>
+                  <div className={`text-xs font-semibold uppercase ${isWE ? 'text-[#4b5568]' : 'text-[#8892a4]'}`}>
                     {DAY_NAMES[day.getDay()]}
                   </div>
-                  <div className={`text-sm font-bold mt-0.5 ${isToday ? 'text-[#3b82f6]' : 'text-gray-800'}`}>
+                  <div className={`text-sm font-bold mt-0.5 ${isToday ? 'text-[#3b82f6]' : 'text-white'}`}>
                     {day.getDate()}
                   </div>
                   {special && (
@@ -162,15 +162,15 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
 
           {/* Slot rows */}
           {allSlotTimes.length === 0 ? (
-            <div className="py-12 text-center text-sm text-gray-400">
+            <div className="py-12 text-center text-sm text-[#4b5568]">
               Нет тайм-слотов. Нажмите «Тайм-слоты» чтобы настроить.
             </div>
           ) : (
             allSlotTimes.map((slotTime) => (
-              <div key={slotTime} className="grid border-b border-gray-200 last:border-0" style={{ gridTemplateColumns: '72px repeat(7, 1fr)' }}>
+              <div key={slotTime} className="grid border-b border-[#252d3d] last:border-0" style={{ gridTemplateColumns: '72px repeat(7, 1fr)' }}>
                 {/* Time label */}
-                <div className="px-3 py-2 flex items-start pt-3 bg-[#161b27] border-r border-[#252d3d]">
-                  <span className="text-xs text-gray-400 font-medium">{slotTime}</span>
+                <div className="px-3 py-2 flex items-start pt-3 bg-[#0f1117] border-r border-[#252d3d]">
+                  <span className="text-xs text-[#4b5568] font-medium">{slotTime}</span>
                 </div>
                 {/* Day cells */}
                 {weekDays.map((day) => {
@@ -181,7 +181,7 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
 
                   if (!slotDef) {
                     return (
-                      <div key={day.toISOString()} className={`border-l border-gray-200 min-h-[72px] ${isWE ? 'bg-gray-50' : 'bg-white'}`} />
+                      <div key={day.toISOString()} className={`border-l border-[#252d3d] min-h-[72px] ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27]'}`} />
                     );
                   }
 
@@ -189,16 +189,16 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
                   const freeSlots = slotDef.brigades - connsHere.length;
 
                   return (
-                    <div key={day.toISOString()} className={`border-l border-gray-200 p-1.5 min-h-[72px] ${isWE ? 'bg-gray-50' : 'bg-white hover:bg-blue-50'} transition-colors`}>
+                    <div key={day.toISOString()} className={`border-l border-[#252d3d] p-1.5 min-h-[72px] ${isWE ? 'bg-[#0f1117]' : 'bg-[#161b27] hover:bg-[#1e2637]'} transition-colors`}>
                       {/* Brigades capacity */}
                       <div className="flex items-center justify-between mb-1">
-                        <span className={`text-[10px] font-medium ${freeSlots > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        <span className={`text-[10px] font-medium ${freeSlots > 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
                           {freeSlots > 0 ? `${freeSlots} св.` : 'Занято'}
                         </span>
                         {freeSlots > 0 && (
                           <button
                             onClick={() => openConnectionForm(ds, slotDef)}
-                            className="w-5 h-5 rounded flex items-center justify-center bg-blue-100 hover:bg-blue-500 text-blue-500 hover:text-white transition-colors"
+                            className="w-5 h-5 rounded flex items-center justify-center bg-[#3b82f6]/20 hover:bg-[#3b82f6] text-[#3b82f6] hover:text-white transition-colors"
                             title="Добавить подключение"
                           >
                             <Icon name="Plus" size={10} />
@@ -216,7 +216,7 @@ export default function ServiceCalendar({ onOpenPanel, onClosePanel }: Props) {
                           >
                             <div className={`text-xs font-medium ${st.color} truncate leading-tight w-full`}>{conn.subscriberName}</div>
                             {conn.subscriberAddress && (
-                              <div className="text-[10px] text-gray-400 truncate w-full">{conn.subscriberAddress}</div>
+                              <div className="text-[10px] text-[#4b5568] truncate w-full">{conn.subscriberAddress}</div>
                             )}
                           </div>
                         );

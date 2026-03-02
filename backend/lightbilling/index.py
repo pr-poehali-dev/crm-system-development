@@ -575,37 +575,71 @@ def handler(event: dict, context) -> dict:
             except:
                 body = {}
 
+            contract = body.get("contract", "")
             lb_id = body.get("lb_id", "")
             amount = body.get("amount", 0)
-            comment = body.get("comment", "Пополнение баланса через CRM")
+            comment = body.get("comment", "Пополнение через CRM")
 
-            if not lb_id:
-                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "lb_id обязателен"})}
+            if not contract and not lb_id:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "contract или lb_id обязателен"})}
             if not amount or float(amount) <= 0:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "Сумма должна быть положительной"})}
 
-            post_fields = {
-                "user": lb_id,
-                "sum": str(float(amount)),
-                "comment": comment,
-                "action": "add",
-                "page": "payments/edit",
-            }
+            # Сначала получаем страницу оплаты чтобы взять скрытые поля формы (token/csrf если есть)
+            pay_url = LB_BASE + "?page=pay&contract=" + urllib.parse.quote(str(contract))
+            req_get = urllib.request.Request(pay_url)
+            req_get.add_header("Cookie", get_cookies())
+            req_get.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            with urllib.request.urlopen(req_get, timeout=15) as r:
+                page_html = r.read().decode("utf-8", errors="replace")
+
+            # Извлекаем скрытые поля формы
+            hidden_fields = {}
+            for m in re.finditer(r'<input[^>]+type=["\']hidden["\'][^>]*>', page_html, re.IGNORECASE):
+                tag = m.group(0)
+                name_m = re.search(r'name=["\']([^"\']+)["\']', tag)
+                val_m = re.search(r'value=["\']([^"\']*)["\']', tag)
+                if name_m:
+                    hidden_fields[name_m.group(1)] = val_m.group(1) if val_m else ""
+
+            # POST на страницу pay с contract и суммой
+            post_fields = {**hidden_fields}
+            post_fields["contract"] = str(contract)
+            post_fields["summ"] = str(float(amount))
+            post_fields["comment"] = comment
+            post_fields["page"] = "pay"
+
             post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
 
-            req = urllib.request.Request(LB_BASE, data=post_data, method="POST")
-            req.add_header("Cookie", get_cookies())
-            req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
-            req.add_header("Referer", LB_BASE + "?page=payments/edit")
+            req_post = urllib.request.Request(LB_BASE, data=post_data, method="POST")
+            req_post.add_header("Cookie", get_cookies())
+            req_post.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            req_post.add_header("Content-Type", "application/x-www-form-urlencoded")
+            req_post.add_header("Referer", pay_url)
 
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                resp.read()
+            with urllib.request.urlopen(req_post, timeout=15) as resp:
+                resp_html = resp.read().decode("utf-8", errors="replace")
+
+            # Проверяем что платёж прошёл — ищем признаки успеха или ошибки
+            success = True
+            error_msg = None
+            if "error" in resp_html.lower() or "ошибка" in resp_html.lower():
+                # Ищем текст ошибки
+                err_m = re.search(r'class=["\'][^"\']*error[^"\']*["\'][^>]*>\s*([^<]{5,100})', resp_html, re.IGNORECASE)
+                if err_m:
+                    error_msg = err_m.group(1).strip()
+                    success = False
 
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
-                "body": json.dumps({"success": True, "lb_id": lb_id, "amount": float(amount)}, ensure_ascii=False),
+                "body": json.dumps({
+                    "success": success,
+                    "lb_id": lb_id,
+                    "contract": contract,
+                    "amount": float(amount),
+                    "error": error_msg,
+                }, ensure_ascii=False),
             }
 
         else:

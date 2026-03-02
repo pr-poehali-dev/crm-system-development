@@ -21,7 +21,7 @@ interface TopupFormProps {
   sub: Subscriber;
   lbId?: string;
   registers: CashRegister[];
-  onSave: (cashRegisterId: string, amount: number) => Promise<void>;
+  onSave: (cashRegisterId: string, amount: number) => Promise<boolean | undefined>;
   onCancel: () => void;
 }
 
@@ -37,8 +37,9 @@ function TopupForm({ sub, lbId, registers, onSave, onCancel }: TopupFormProps) {
     if (!a || a <= 0) return;
     setLoading(true);
     setResult(null);
-    await onSave(cashRegisterId, a);
+    const lbOk = await onSave(cashRegisterId, a);
     setLoading(false);
+    setResult({ ok: true, lbOk });
   };
 
   if (result?.ok) {
@@ -172,7 +173,12 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
         onSave={async (cashRegisterId, amount) => {
           let lbOk: boolean | undefined;
           if (lbId) {
-            const res = await lb.addPayment(lbId, amount, `Пополнение через CRM: ${sub.fullName} (${sub.contractNumber})`);
+            const res = await lb.addPayment(
+              lbId,
+              amount,
+              `Пополнение через CRM: ${sub.fullName}`,
+              sub.contractNumber,
+            );
             lbOk = res.success;
           }
           addCashPayment({
@@ -190,7 +196,7 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
             createdAt: new Date().toISOString(),
           });
           updateSubscriber(sub.id, { balance: sub.balance + amount });
-          void lbOk;
+          return lbOk;
         }}
         onCancel={onClosePanel}
       />
