@@ -19,15 +19,45 @@ interface Props {
 
 interface TopupFormProps {
   sub: Subscriber;
+  lbId?: string;
   registers: CashRegister[];
-  onSave: (cashRegisterId: string, amount: number) => void;
+  onSave: (cashRegisterId: string, amount: number) => Promise<void>;
   onCancel: () => void;
 }
 
-function TopupForm({ sub, registers, onSave, onCancel }: TopupFormProps) {
+function TopupForm({ sub, lbId, registers, onSave, onCancel }: TopupFormProps) {
   const [cashRegisterId, setCashRegisterId] = useState(registers[0]?.id || '');
   const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; lbOk?: boolean; msg?: string } | null>(null);
   const presets = [100, 200, 300, 500, 1000];
+
+  const handleSave = async () => {
+    const a = parseFloat(amount);
+    if (!a || a <= 0) return;
+    setLoading(true);
+    setResult(null);
+    await onSave(cashRegisterId, a);
+    setLoading(false);
+  };
+
+  if (result?.ok) {
+    return (
+      <div className="space-y-4 text-center py-6">
+        <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto">
+          <Icon name="CheckCircle2" size={32} className="text-emerald-500" />
+        </div>
+        <div>
+          <div className="text-base font-bold text-foreground">Баланс пополнен!</div>
+          <div className="text-sm text-muted-foreground mt-1">+{parseFloat(amount).toLocaleString('ru-RU')} ₽</div>
+          {result.lbOk && <div className="text-xs text-emerald-500 mt-1 flex items-center justify-center gap-1"><Icon name="Zap" size={12} />Платёж прошёл в LightBilling</div>}
+          {result.lbOk === false && <div className="text-xs text-amber-500 mt-1 flex items-center justify-center gap-1"><Icon name="AlertTriangle" size={12} />Только в CRM (LB недоступен)</div>}
+        </div>
+        <button onClick={onCancel} className="w-full py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium">Закрыть</button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className={`rounded-xl p-3 text-center ${sub.balance >= 0 ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
@@ -36,6 +66,16 @@ function TopupForm({ sub, registers, onSave, onCancel }: TopupFormProps) {
           {sub.balance >= 0 ? '+' : ''}{sub.balance.toLocaleString('ru-RU')} ₽
         </div>
       </div>
+      {lbId && (
+        <div className="flex items-center gap-2 text-xs text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+          <Icon name="Zap" size={12} />Платёж уйдёт в LightBilling (ID: {lbId})
+        </div>
+      )}
+      {!lbId && (
+        <div className="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+          <Icon name="AlertTriangle" size={12} />Абонент не связан с LB — платёж только в CRM
+        </div>
+      )}
       <div><label className="block text-xs font-medium text-muted-foreground mb-1.5">Касса</label>
         <select value={cashRegisterId} onChange={(e) => setCashRegisterId(e.target.value)} className={selectCls}>
           {registers.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -57,11 +97,14 @@ function TopupForm({ sub, registers, onSave, onCancel }: TopupFormProps) {
       )}
       <div className="flex gap-3 pt-4 border-t border-border">
         <button
-          onClick={() => { const a = parseFloat(amount); if (a > 0) onSave(cashRegisterId, a); }}
-          disabled={!amount || parseFloat(amount) <= 0}
-          className="flex-1 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium disabled:opacity-50"
-        >Пополнить баланс</button>
-        <button onClick={onCancel} className="px-4 py-2 bg-muted text-muted-foreground rounded-lg text-sm">Отмена</button>
+          onClick={handleSave}
+          disabled={!amount || parseFloat(amount) <= 0 || loading}
+          className="flex-1 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {loading && <Icon name="Loader" size={14} className="animate-spin" />}
+          {loading ? 'Проводим...' : 'Пополнить баланс'}
+        </button>
+        <button onClick={onCancel} disabled={loading} className="px-4 py-2 bg-muted text-muted-foreground rounded-lg text-sm">Отмена</button>
       </div>
     </div>
   );
@@ -84,7 +127,7 @@ function lbToSubscriber(lb: LBSubscriber): Subscriber {
 }
 
 export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: Props) {
-  const { subscribers: localSubs, cashRegisters, currentOfficeId, addCashPayment, updateSubscriber } = useCRMStore();
+  const { subscribers: localSubs, cashRegisters, cashPayments, currentOfficeId, addCashPayment, updateSubscriber } = useCRMStore();
   const lb = useLightBilling();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | Subscriber['status']>('all');
@@ -120,12 +163,18 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
   const offRegisters = cashRegisters.filter((r) => r.officeId === currentOfficeId);
   const todayStr = new Date().toISOString().split('T')[0];
 
-  const openTopup = (sub: Subscriber) => {
+  const openTopup = (sub: Subscriber, lbId?: string) => {
     onOpenPanel(`Пополнение: ${sub.fullName}`, (
       <TopupForm
         sub={sub}
+        lbId={lbId}
         registers={offRegisters}
-        onSave={(cashRegisterId, amount) => {
+        onSave={async (cashRegisterId, amount) => {
+          let lbOk: boolean | undefined;
+          if (lbId) {
+            const res = await lb.addPayment(lbId, amount, `Пополнение через CRM: ${sub.fullName} (${sub.contractNumber})`);
+            lbOk = res.success;
+          }
           addCashPayment({
             id: uid(),
             officeId: currentOfficeId,
@@ -136,11 +185,12 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
             description: `Пополнение баланса: ${sub.fullName} (${sub.contractNumber})`,
             subscriberId: sub.id,
             subscriberName: sub.fullName,
+            comment: lbId ? `LB ID: ${lbId}` : undefined,
             date: todayStr,
             createdAt: new Date().toISOString(),
           });
           updateSubscriber(sub.id, { balance: sub.balance + amount });
-          onClosePanel();
+          void lbOk;
         }}
         onCancel={onClosePanel}
       />
@@ -149,15 +199,17 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
 
   const openCard = (sub: Subscriber) => {
     const lbSub = lb.subscribers.find((s) => (s.id || s.lb_id) === sub.id);
+    const subPayments = cashPayments.filter((p) => p.subscriberId === sub.id && p.type === 'subscriber_payment');
     onOpenPanel(sub.fullName, (
       <SubscriberCard
         sub={sub}
         lbId={lbSub?.lb_id}
+        payments={subPayments}
         onCreateTicket={onCreateTicket ? () => {
           onClosePanel();
           onCreateTicket({ name: sub.fullName, address: sub.address, phone: sub.phone, lbId: lbSub?.lb_id, contract: sub.contractNumber });
         } : undefined}
-        onTopup={() => openTopup(sub)}
+        onTopup={() => openTopup(sub, lbSub?.lb_id)}
       />
     ));
   };
@@ -322,7 +374,7 @@ function InfoRow({ label, value, highlight }: { label: string; value: React.Reac
   );
 }
 
-function SubscriberCard({ sub, lbId, onCreateTicket, onTopup }: { sub: Subscriber; lbId?: string; onCreateTicket?: () => void; onTopup?: () => void }) {
+function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, payments }: { sub: Subscriber; lbId?: string; onCreateTicket?: () => void; onTopup?: () => void; payments: import('@/types/crm').CashPayment[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 pb-4 border-b border-border">
@@ -386,6 +438,31 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup }: { sub: Subscribe
           </button>
         )}
       </div>
+
+      {payments.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">История пополнений</div>
+          <div className="bg-muted/50 border border-border rounded-xl overflow-hidden">
+            {payments.slice().reverse().map((p) => (
+              <div key={p.id} className="flex items-center justify-between px-3 py-2.5 border-b border-border last:border-0">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                    <Icon name="ArrowDownLeft" size={11} className="text-emerald-500" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-foreground">{new Date(p.date).toLocaleDateString('ru-RU')}</div>
+                    {p.comment && <div className="text-xs text-muted-foreground">{p.comment}</div>}
+                  </div>
+                </div>
+                <div className="text-sm font-bold text-emerald-500">+{p.amount.toLocaleString('ru-RU')} ₽</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {payments.length === 0 && (
+        <div className="text-center text-xs text-muted-foreground py-3">История пополнений пуста</div>
+      )}
     </div>
   );
 }

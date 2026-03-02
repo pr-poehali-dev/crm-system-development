@@ -34,6 +34,13 @@ export interface LBCreateResult {
   message: string;
 }
 
+export interface LBPaymentResult {
+  success: boolean;
+  lb_id: string;
+  amount: number;
+  message?: string;
+}
+
 interface UseLBReturn {
   loading: boolean;
   error: string | null;
@@ -51,6 +58,7 @@ interface UseLBReturn {
     tariffId: string;
     contractNumber?: string;
   }) => Promise<LBCreateResult>;
+  addPayment: (lbId: string, amount: number, comment?: string) => Promise<LBPaymentResult>;
 }
 
 export function useLightBilling(): UseLBReturn {
@@ -137,8 +145,22 @@ export function useLightBilling(): UseLBReturn {
     }
   }, []);
 
+  const addPayment = useCallback(async (lbId: string, amount: number, comment = 'Пополнение баланса через CRM'): Promise<LBPaymentResult> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=add_payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lb_id: lbId, amount, comment }),
+      });
+      const data = await res.json();
+      return data as LBPaymentResult;
+    } catch {
+      return { success: false, lb_id: lbId, amount, message: 'Ошибка соединения с LightBilling' };
+    }
+  }, []);
+
   return {
     loading, error, subscribers, total, tariffs,
-    searchSubscribers, loadSubscribers, getDetail, loadTariffs, createSubscriber,
+    searchSubscribers, loadSubscribers, getDetail, loadTariffs, createSubscriber, addPayment,
   };
 }

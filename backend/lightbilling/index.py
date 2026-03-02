@@ -568,6 +568,46 @@ def handler(event: dict, context) -> dict:
                 }, ensure_ascii=False),
             }
         
+        elif action == "add_payment":
+            body_raw = event.get("body", "{}")
+            try:
+                body = json.loads(body_raw) if body_raw else {}
+            except:
+                body = {}
+
+            lb_id = body.get("lb_id", "")
+            amount = body.get("amount", 0)
+            comment = body.get("comment", "Пополнение баланса через CRM")
+
+            if not lb_id:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "lb_id обязателен"})}
+            if not amount or float(amount) <= 0:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "Сумма должна быть положительной"})}
+
+            post_fields = {
+                "user": lb_id,
+                "sum": str(float(amount)),
+                "comment": comment,
+                "action": "add",
+                "page": "payments/edit",
+            }
+            post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
+
+            req = urllib.request.Request(LB_BASE, data=post_data, method="POST")
+            req.add_header("Cookie", get_cookies())
+            req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+            req.add_header("Referer", LB_BASE + "?page=payments/edit")
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp.read()
+
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({"success": True, "lb_id": lb_id, "amount": float(amount)}, ensure_ascii=False),
+            }
+
         else:
             return {
                 "statusCode": 400,
