@@ -524,33 +524,45 @@ def handler(event: dict, context) -> dict:
             req.add_header("Referer", LB_BASE + "?page=users/edit")
             
             with urllib.request.urlopen(req, timeout=15) as resp:
-                resp.read()  # читаем и игнорируем тело ответа
+                resp.read()
             
-            # После создания ищем абонента по договору или ФИО чтобы получить его ID
+            # Ищем только что созданного абонента: запрашиваем список, отсортированный по ID desc
+            # Новый абонент окажется в первых строках, сверяем по договору или фамилии
             new_id = ""
-            search_query = contract if contract else full_name
-            search_html = lb_request("", {"search": search_query, "limit": "5"})
+            search_params = {"limit": "20", "order": "id", "sort": "desc"}
+            if contract:
+                search_params["search"] = contract
+            else:
+                search_params["search"] = last_name
             
-            # Парсим таблицу результатов поиска
+            search_html = lb_request("", search_params)
             subs = parse_subscribers_html(search_html)
-            if subs:
-                # Берём первого совпадающего по ФИО или договору
-                for s in subs:
-                    name_match = last_name.lower() in s.get("fullName", "").lower()
-                    contract_match = contract and contract in s.get("contractNumber", "")
-                    if contract_match or name_match:
-                        new_id = s.get("lb_id", "")
-                        break
-                if not new_id and subs:
-                    new_id = subs[0].get("lb_id", "")
             
-            success = True  # POST выполнен без ошибок (иначе было бы исключение)
+            for s in subs:
+                s_contract = s.get("contractNumber", "").strip()
+                s_name = s.get("fullName", "").lower()
+                s_id = s.get("lb_id", "")
+                if not s_id:
+                    continue
+                # Точное совпадение по договору
+                if contract and s_contract == contract.strip():
+                    new_id = s_id
+                    break
+                # Совпадение по фамилии + имени
+                if last_name.lower() in s_name and (not first_name or first_name.lower() in s_name):
+                    new_id = s_id
+                    break
+            
+            # Если совпадений нет — берём запись с наибольшим числовым ID (последняя созданная)
+            if not new_id and subs:
+                best = max(subs, key=lambda x: int(x.get("lb_id", "0")) if x.get("lb_id", "").isdigit() else 0)
+                new_id = best.get("lb_id", "")
             
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
                 "body": json.dumps({
-                    "success": success,
+                    "success": True,
                     "lb_id": new_id,
                     "message": "Абонент создан" if new_id else "Абонент создан (ID не определён)",
                 }, ensure_ascii=False),
