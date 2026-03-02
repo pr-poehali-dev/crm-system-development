@@ -499,10 +499,11 @@ def handler(event: dict, context) -> dict:
                 "tariff": tariff_id,
                 "contract": contract,
                 "action": "add",
+                "page": "users/add",
             }).encode("utf-8")
             
             req = urllib.request.Request(
-                LB_BASE + "?page=users/add",
+                LB_BASE,
                 data=post_data,
                 method="POST",
             )
