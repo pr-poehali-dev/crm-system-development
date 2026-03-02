@@ -4,6 +4,7 @@
 """
 import os
 import json
+import re
 import urllib.request
 import urllib.parse
 from html.parser import HTMLParser
@@ -54,7 +55,7 @@ class SubscribersParser(HTMLParser):
     
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
-        if tag == "table" and "users" in attrs_dict.get("id", ""):
+        if tag == "table" and attrs_dict.get("id") == "keywords":
             self.in_table = True
         if self.in_table and tag == "tr":
             self.in_row = True
@@ -175,53 +176,142 @@ def map_status(status_text: str) -> str:
     return "terminated"
 
 
+def strip_tags(html: str) -> str:
+    """Удаляет все HTML-теги, возвращает чистый текст"""
+    clean = re.sub(r'<[^>]+>', ' ', html)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
+
+
 def parse_subscribers_html(html: str) -> list:
-    """Парсит HTML списка абонентов"""
-    parser = SubscribersParser()
-    parser.feed(html)
+    """
+    Парсит HTML таблицы id='keywords' из LightBilling.
+    Структура строки:
+      td[0] — ID (ссылка на /view&id=XXXX) + статус через class online-cell/online-cell-disabled
+      td[1] — номер договора
+      td[2] — скрытый логин (hidden-login, пропускаем)
+      td[3] — ФИО (текст внутри тега, может быть data-tooltip)
+      td[4..N] — адрес, тариф, телефон, баланс и т.д.
+    """
+    # Найдём таблицу keywords
+    table_match = re.search(r'<table[^>]*id=["\']keywords["\'][^>]*>(.*?)</table>', html, re.DOTALL)
+    if not table_match:
+        return []
+    
+    table_html = table_match.group(1)
+    
+    # Все строки tr
+    rows = re.findall(r'<tr([^>]*)>(.*?)</tr>', table_html, re.DOTALL)
     
     result = []
-    for row in parser.subscribers:
-        if len(row) < 2:
+    for row_attrs, row_html in rows:
+        # Все ячейки td
+        cells_raw = re.findall(r'<td([^>]*)>(.*?)</td>', row_html, re.DOTALL)
+        if len(cells_raw) < 3:
             continue
         
-        sub_id = ""
-        if row[0].get("link"):
-            sub_id = extract_subscriber_id(row[0]["link"])
+        # td[0]: ID абонента + статус онлайн
+        td0_attrs, td0_content = cells_raw[0]
+        lb_id = ""
+        id_match = re.search(r'id=(\d+)', td0_content)
+        if id_match:
+            lb_id = id_match.group(1)
         
-        cells = [c.get("text", "") for c in row]
+        # Статус по классу ячейки
+        status = "active"
+        if "disabled" in td0_attrs or "offline" in td0_attrs:
+            status = "suspended"
         
-        subscriber = {
-            "id": sub_id or cells[0],
-            "fullName": cells[0] if cells else "",
-            "contractNumber": cells[1] if len(cells) > 1 else "",
-            "address": cells[2] if len(cells) > 2 else "",
-            "tariff": cells[3] if len(cells) > 3 else "",
-            "balance": 0,
-            "status": "active",
-            "phone": cells[5] if len(cells) > 5 else "",
-            "connectDate": "",
-            "ipAddress": "",
-            "lb_id": sub_id,
-        }
+        # td[1]: номер договора
+        contract = strip_tags(cells_raw[1][1]).strip()
         
-        # Баланс
-        for i, cell in enumerate(cells):
-            if "₽" in cell or "руб" in cell.lower() or (i > 1 and any(c.isdigit() for c in cell)):
-                try:
-                    bal_str = cell.replace("₽", "").replace("руб", "").replace(" ", "").replace(",", ".").strip()
-                    subscriber["balance"] = float(bal_str)
-                    break
-                except:
-                    pass
+        # td[3]: ФИО (td[2] — hidden-login, пропускаем)
+        full_name = ""
+        if len(cells_raw) > 3:
+            td3_content = cells_raw[3][1]
+            # Вариант 1: <a data-tooltip="..."> ФИО <img...>
+            tooltip_match = re.search(r'data-tooltip=["\'][^"\']*["\'][^>]*>\s*([^<\n\r]+)', td3_content)
+            if tooltip_match:
+                full_name = tooltip_match.group(1).strip()
+            if not full_name:
+                # Вариант 2: просто текст с возможными тегами внутри
+                full_name = strip_tags(td3_content)
+            # Убираем артефакты — оставляем только ФИО-часть (до первой ссылки/иконки)
+            full_name = re.sub(r'\s+', ' ', full_name).strip()
+            # Берём первые 3 слова если длиннее
+            words = full_name.split()
+            if len(words) > 5:
+                full_name = ' '.join(words[:3])
         
-        # Статус
-        for cell in cells:
-            if any(w in cell.lower() for w in ["актив", "приост", "отключ", "suspend", "active"]):
-                subscriber["status"] = map_status(cell)
+        # td[4..N]: все остальные ячейки — собираем все тексты для диагностики
+        extra = [strip_tags(cells_raw[i][1]) for i in range(4, len(cells_raw))]
+        
+        # Ищем баланс — ячейка с числом (содержит цифры и точку/запятую)
+        balance_str = "0"
+        balance_idx = -1
+        for i, val in enumerate(extra):
+            val_clean = val.replace(',', '.').replace(' ', '')
+            if re.match(r'^-?\d+\.?\d*$', val_clean) and len(val_clean) > 0:
+                balance_str = val_clean
+                balance_idx = i
                 break
         
-        result.append(subscriber)
+        # ФИО уже извлечено из td[3], если нет — берём из extra как ФИО-похожую строку
+        if not full_name or full_name == lb_id:
+            for val in extra:
+                parts = val.split()
+                # ФИО обычно 2-3 слова, каждое с заглавной
+                if 2 <= len(parts) <= 4 and all(p[0].isupper() for p in parts if p):
+                    full_name = val
+                    break
+        
+        # Адрес — ищем ячейку с "мкр", "ул", "д.", "кв" или цифрами
+        address = ""
+        for val in extra:
+            if any(w in val.lower() for w in ["мкр", "ул.", "ул ", "д.", " кв", "пер.", "пр.", "пгт"]):
+                address = val
+                break
+        
+        # Тариф — строка без цифр, не ФИО, не адрес
+        tariff = ""
+        for val in extra:
+            if val and val != address and val != full_name and not re.search(r'\d', val):
+                if len(val.split()) <= 6:
+                    tariff = val
+                    break
+        
+        # Телефон — ищем по формату
+        phone = ""
+        for val in extra:
+            if re.search(r'[\d\-\+\(\)]{7,}', val) and "мкр" not in val.lower():
+                phone = val
+                break
+        
+        # Парсим баланс
+        balance = 0.0
+        try:
+            bal_clean = re.sub(r'[^\d.\-,]', '', balance_str.replace(',', '.'))
+            if bal_clean:
+                balance = float(bal_clean)
+        except:
+            pass
+        
+        if not full_name and not lb_id:
+            continue
+        
+        result.append({
+            "id": lb_id,
+            "lb_id": lb_id,
+            "fullName": full_name or f"Абонент #{lb_id}",
+            "contractNumber": contract,
+            "address": address,
+            "tariff": tariff,
+            "balance": balance,
+            "status": status,
+            "phone": phone,
+            "connectDate": "",
+            "ipAddress": "",
+        })
     
     return result
 
@@ -252,6 +342,43 @@ def handler(event: dict, context) -> dict:
         }
     
     try:
+        if action == "debug":
+            html = lb_request("", {"group": "", "tariff": "0", "search": "", "limit": "5"})
+            # Найдём все теги table
+            table_tags = []
+            i = 0
+            while True:
+                idx = html.find('<table', i)
+                if idx == -1:
+                    break
+                end = html.find('>', idx)
+                table_tags.append(html[idx:end+1])
+                i = idx + 1
+            # Найдём первые строки tr с td
+            tr_samples = []
+            i = 0
+            count = 0
+            while count < 3:
+                idx = html.find('<tr', i)
+                if idx == -1:
+                    break
+                end = html.find('</tr>', idx)
+                row = html[idx:end+5] if end != -1 else html[idx:idx+2000]
+                if '<td' in row:
+                    tr_samples.append(row[:2000])
+                    count += 1
+                i = idx + 1
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "html_length": len(html),
+                    "has_login": 'page=login' in html,
+                    "table_tags": table_tags,
+                    "tr_samples": tr_samples,
+                }, ensure_ascii=False),
+            }
+        
         if action == "subscribers":
             search = params.get("search", "")
             limit = params.get("limit", "100")
