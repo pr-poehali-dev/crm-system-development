@@ -474,90 +474,172 @@ def handler(event: dict, context) -> dict:
                 body = json.loads(body_raw) if body_raw else {}
             except:
                 body = {}
-            
+
             full_name = body.get("fullName", "")
             address = body.get("address", "")
             phone = body.get("phone", "")
             tariff_id = body.get("tariffId", "")
             contract = body.get("contractNumber", "")
-            login = body.get("login", "")
+            login_val = body.get("login", "")
             password = body.get("password", "")
-            group = body.get("group", "Физические лица")
-            
+            group = body.get("group", "")
+
             if not full_name:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "ФИО обязательно"})}
-            
-            # Разбиваем ФИО
+
             parts = full_name.split()
             last_name = parts[0] if len(parts) > 0 else ""
             first_name = parts[1] if len(parts) > 1 else ""
             middle_name = parts[2] if len(parts) > 2 else ""
-            
-            post_fields = {
-                "last_name": last_name,
-                "first_name": first_name,
-                "middle_name": middle_name,
-                "address": address,
-                "phone": phone,
-                "tariff": tariff_id,
-                "group": group,
-                "action": "add",
-                "page": "users/edit",
-            }
+
+            print(f"[create_subscriber] fullName={full_name!r} contract={contract!r} tariff={tariff_id!r}")
+
+            # Шаг 1: GET страницы создания абонента — получаем форму с реальными именами полей
+            create_url = LB_BASE + "?page=users/edit"
+            req_get = urllib.request.Request(create_url)
+            req_get.add_header("Cookie", get_cookies())
+            req_get.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            with urllib.request.urlopen(req_get, timeout=15) as r:
+                final_url = r.geturl()
+                form_html = r.read().decode("utf-8", errors="replace")
+
+            print(f"[create_subscriber] GET {create_url} -> {final_url} html_len={len(form_html)}")
+
+            if "page=login" in final_url or ("login" in form_html[:500].lower() and len(form_html) < 500):
+                return {"statusCode": 200, "headers": cors_headers, "body": json.dumps({"success": False, "error": "Сессия LightBilling истекла. Обновите LB_COUNTERSIGN."})}
+
+            # Извлекаем все input-поля формы
+            all_inputs = {}
+            for m in re.finditer(r'<input([^>]*)>', form_html, re.IGNORECASE):
+                tag_attrs = m.group(1)
+                name_m = re.search(r'name=["\']([^"\']+)["\']', tag_attrs)
+                val_m = re.search(r'value=["\']([^"\']*)["\']', tag_attrs)
+                type_m = re.search(r'type=["\']([^"\']+)["\']', tag_attrs)
+                if name_m:
+                    all_inputs[name_m.group(1)] = {
+                        "value": val_m.group(1) if val_m else "",
+                        "type": type_m.group(1) if type_m else "text",
+                    }
+
+            # select-поля тоже собираем
+            for m in re.finditer(r'<select([^>]*)>', form_html, re.IGNORECASE):
+                tag_attrs = m.group(1)
+                name_m = re.search(r'name=["\']([^"\']+)["\']', tag_attrs)
+                if name_m and name_m.group(1) not in all_inputs:
+                    all_inputs[name_m.group(1)] = {"value": "", "type": "select"}
+
+            # action формы
+            form_action_m = re.search(r'<form[^>]+action=["\']([^"\']*)["\']', form_html, re.IGNORECASE)
+            form_action = form_action_m.group(1) if form_action_m else "?page=users/edit"
+            print(f"[create_subscriber] form_action={form_action!r} inputs={list(all_inputs.keys())}")
+
+            # Шаг 2: Собираем POST — берём все hidden-поля как есть, заполняем нужные
+            post_fields = {}
+            for name, info in all_inputs.items():
+                if info["type"] == "hidden":
+                    post_fields[name] = info["value"]
+
+            # Динамически ищем имена полей ФИО
+            def find_field(keys_hints):
+                for name in all_inputs:
+                    nl = name.lower()
+                    if any(h in nl for h in keys_hints):
+                        return name
+                return None
+
+            f_last = find_field(["last", "surname", "фами", "lastname"]) or "last_name"
+            f_first = find_field(["first", "name", "имя", "firstname"]) or "first_name"
+            f_mid = find_field(["mid", "patron", "отч", "middle"]) or "middle_name"
+            f_addr = find_field(["addr", "адр"]) or "address"
+            f_phone = find_field(["phone", "тел", "mobile"]) or "phone"
+            f_tariff = find_field(["tariff", "тариф"]) or "tariff"
+            f_contract = find_field(["contract", "договор", "dogovor"]) or "contract"
+            f_login = find_field(["login", "логин", "user"]) or "login"
+            f_pass = find_field(["pass", "пароль", "pwd"]) or "password"
+            f_group = find_field(["group", "группа"]) or "group"
+
+            print(f"[create_subscriber] fields: last={f_last!r} first={f_first!r} addr={f_addr!r} tariff={f_tariff!r} group={f_group!r}")
+
+            post_fields[f_last] = last_name
+            post_fields[f_first] = first_name
+            post_fields[f_mid] = middle_name
+            post_fields[f_addr] = address
+            post_fields[f_phone] = phone
+            post_fields[f_tariff] = tariff_id
             if contract:
-                post_fields["contract"] = contract
-            if login:
-                post_fields["login"] = login
+                post_fields[f_contract] = contract
+            if login_val:
+                post_fields[f_login] = login_val
             if password:
-                post_fields["password"] = password
-            
-            post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
-            
-            req = urllib.request.Request(
-                LB_BASE,
-                data=post_data,
-                method="POST",
-            )
-            req.add_header("Cookie", get_cookies())
-            req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
-            req.add_header("Referer", LB_BASE + "?page=users/edit")
-            
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                resp.read()
-            
-            # Ищем только что созданного абонента: запрашиваем список, отсортированный по ID desc
-            # Новый абонент окажется в первых строках, сверяем по договору или фамилии
-            new_id = ""
-            search_params = {"limit": "20", "order": "id", "sort": "desc"}
-            if contract:
-                search_params["search"] = contract
+                post_fields[f_pass] = password
+            if group:
+                post_fields[f_group] = group
+            # action и page — обязательные поля LB
+            post_fields["action"] = "add"
+            post_fields["page"] = "users/edit"
+
+            # Определяем URL для POST
+            if form_action and form_action.startswith("http"):
+                post_url = form_action
+            elif form_action and form_action.startswith("?"):
+                post_url = LB_BASE + form_action
+            elif form_action:
+                post_url = LB_BASE + "?" + form_action
             else:
-                search_params["search"] = last_name
-            
-            search_html = lb_request("", search_params)
-            subs = parse_subscribers_html(search_html)
-            
-            for s in subs:
-                s_contract = s.get("contractNumber", "").strip()
-                s_name = s.get("fullName", "").lower()
-                s_id = s.get("lb_id", "")
-                if not s_id:
-                    continue
-                # Точное совпадение по договору
-                if contract and s_contract == contract.strip():
-                    new_id = s_id
-                    break
-                # Совпадение по фамилии + имени
-                if last_name.lower() in s_name and (not first_name or first_name.lower() in s_name):
-                    new_id = s_id
-                    break
-            
-            # Если совпадений нет — берём запись с наибольшим числовым ID (последняя созданная)
-            if not new_id and subs:
-                best = max(subs, key=lambda x: int(x.get("lb_id", "0")) if x.get("lb_id", "").isdigit() else 0)
-                new_id = best.get("lb_id", "")
-            
+                post_url = LB_BASE
+
+            print(f"[create_subscriber] POST {post_url} fields={list(post_fields.keys())}")
+
+            post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
+            req_post = urllib.request.Request(post_url, data=post_data, method="POST")
+            req_post.add_header("Cookie", get_cookies())
+            req_post.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            req_post.add_header("Content-Type", "application/x-www-form-urlencoded")
+            req_post.add_header("Referer", create_url)
+
+            with urllib.request.urlopen(req_post, timeout=15) as resp:
+                resp_url = resp.geturl()
+                resp_html = resp.read().decode("utf-8", errors="replace")
+
+            print(f"[create_subscriber] resp_url={resp_url!r} resp_len={len(resp_html)}")
+            print(f"[create_subscriber] resp_preview={resp_html[:500]!r}")
+
+            # Ищем ID нового абонента в redirect URL: ?page=users/view&id=XXXXX
+            new_id = ""
+            id_m = re.search(r'page=users[/\\]view[^&]*&id=(\d+)', resp_url)
+            if id_m:
+                new_id = id_m.group(1)
+                print(f"[create_subscriber] got id from redirect: {new_id!r}")
+
+            # Если нет — ищем в HTML ответа
+            if not new_id:
+                id_m = re.search(r'page=users[/\\]view[^&]*&id=(\d+)', resp_html)
+                if id_m:
+                    new_id = id_m.group(1)
+                    print(f"[create_subscriber] got id from html: {new_id!r}")
+
+            # Последний шанс — ищем по договору/фамилии в списке
+            if not new_id:
+                search_params = {"limit": "20", "search": contract if contract else last_name}
+                search_html = lb_request("", search_params)
+                subs = parse_subscribers_html(search_html)
+                for s in subs:
+                    s_contract = s.get("contractNumber", "").strip()
+                    s_name = s.get("fullName", "").lower()
+                    s_id = s.get("lb_id", "")
+                    if not s_id:
+                        continue
+                    if contract and s_contract == contract.strip():
+                        new_id = s_id
+                        break
+                    if last_name.lower() in s_name and (not first_name or first_name.lower() in s_name):
+                        new_id = s_id
+                        break
+                if not new_id and subs:
+                    best = max(subs, key=lambda x: int(x.get("lb_id", "0")) if x.get("lb_id", "").isdigit() else 0)
+                    new_id = best.get("lb_id", "")
+                print(f"[create_subscriber] got id from search: {new_id!r}")
+
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
