@@ -580,55 +580,115 @@ def handler(event: dict, context) -> dict:
             amount = body.get("amount", 0)
             comment = body.get("comment", "Пополнение через CRM")
 
+            print(f"[add_payment] contract={contract!r} lb_id={lb_id!r} amount={amount!r}")
+
             if not contract and not lb_id:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "contract или lb_id обязателен"})}
             if not amount or float(amount) <= 0:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "Сумма должна быть положительной"})}
 
-            # Сначала получаем страницу оплаты чтобы взять скрытые поля формы (token/csrf если есть)
-            pay_url = LB_BASE + "?page=pay&contract=" + urllib.parse.quote(str(contract))
+            # Шаг 1: GET страницы оплаты — пробуем по lb_id (надёжнее), fallback на contract
+            if lb_id:
+                pay_url = LB_BASE + "?page=pay&id=" + urllib.parse.quote(str(lb_id))
+            else:
+                pay_url = LB_BASE + "?page=pay&contract=" + urllib.parse.quote(str(contract))
+            print(f"[add_payment] GET {pay_url}")
             req_get = urllib.request.Request(pay_url)
             req_get.add_header("Cookie", get_cookies())
             req_get.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             with urllib.request.urlopen(req_get, timeout=15) as r:
+                final_url = r.geturl()
                 page_html = r.read().decode("utf-8", errors="replace")
 
-            # Извлекаем скрытые поля формы
-            hidden_fields = {}
-            for m in re.finditer(r'<input[^>]+type=["\']hidden["\'][^>]*>', page_html, re.IGNORECASE):
-                tag = m.group(0)
-                name_m = re.search(r'name=["\']([^"\']+)["\']', tag)
-                val_m = re.search(r'value=["\']([^"\']*)["\']', tag)
-                if name_m:
-                    hidden_fields[name_m.group(1)] = val_m.group(1) if val_m else ""
+            print(f"[add_payment] final_url={final_url!r} html_len={len(page_html)}")
 
-            # POST на страницу pay с contract и суммой
-            post_fields = {**hidden_fields}
+            # Проверяем — не редирект ли на логин
+            if "page=login" in final_url or ("login" in page_html[:500].lower() and len(page_html) < 500):
+                print("[add_payment] REDIRECTED TO LOGIN — cookie expired!")
+                return {"statusCode": 200, "headers": cors_headers, "body": json.dumps({"success": False, "error": "Сессия LightBilling истекла. Обновите LB_COUNTERSIGN."})}
+
+            # Извлекаем ВСЕ input-поля формы (и hidden, и visible)
+            all_inputs = {}
+            for m in re.finditer(r'<input([^>]*)>', page_html, re.IGNORECASE):
+                tag_attrs = m.group(1)
+                name_m = re.search(r'name=["\']([^"\']+)["\']', tag_attrs)
+                val_m = re.search(r'value=["\']([^"\']*)["\']', tag_attrs)
+                type_m = re.search(r'type=["\']([^"\']+)["\']', tag_attrs)
+                if name_m:
+                    all_inputs[name_m.group(1)] = {
+                        "value": val_m.group(1) if val_m else "",
+                        "type": type_m.group(1) if type_m else "text",
+                    }
+
+            # Ищем action формы
+            form_action_m = re.search(r'<form[^>]+action=["\']([^"\']*)["\']', page_html, re.IGNORECASE)
+            form_action = form_action_m.group(1) if form_action_m else ""
+            print(f"[add_payment] form_action={form_action!r} inputs={list(all_inputs.keys())}")
+
+            # Формируем POST — берём все hidden, добавляем сумму и комментарий
+            post_fields = {}
+            for name, info in all_inputs.items():
+                if info["type"] == "hidden":
+                    post_fields[name] = info["value"]
+
+            # Находим поля суммы и комментария (могут называться по-разному)
+            # Смотрим все поля не-hidden чтобы найти нужные имена
+            sum_field = None
+            comment_field = None
+            for name, info in all_inputs.items():
+                if info["type"] != "hidden":
+                    nl = name.lower()
+                    if any(k in nl for k in ["sum", "summ", "amount", "сумм"]):
+                        sum_field = name
+                    if any(k in nl for k in ["comment", "comm", "note", "коммент"]):
+                        comment_field = name
+
+            print(f"[add_payment] sum_field={sum_field!r} comment_field={comment_field!r}")
+
+            # Если не нашли через атрибуты — используем стандартные имена LB
+            post_fields[sum_field or "summ"] = str(float(amount))
+            if comment_field:
+                post_fields[comment_field] = comment
+            else:
+                post_fields["comment"] = comment
             post_fields["contract"] = str(contract)
-            post_fields["summ"] = str(float(amount))
-            post_fields["comment"] = comment
-            post_fields["page"] = "pay"
+
+            # Определяем URL для POST
+            if form_action and form_action.startswith("http"):
+                post_url = form_action
+            elif form_action:
+                post_url = LB_BASE + form_action.lstrip("?")
+            else:
+                post_url = LB_BASE
+
+            print(f"[add_payment] POST {post_url} fields={list(post_fields.keys())}")
 
             post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
-
-            req_post = urllib.request.Request(LB_BASE, data=post_data, method="POST")
+            req_post = urllib.request.Request(post_url, data=post_data, method="POST")
             req_post.add_header("Cookie", get_cookies())
             req_post.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             req_post.add_header("Content-Type", "application/x-www-form-urlencoded")
             req_post.add_header("Referer", pay_url)
 
             with urllib.request.urlopen(req_post, timeout=15) as resp:
+                resp_url = resp.geturl()
                 resp_html = resp.read().decode("utf-8", errors="replace")
 
-            # Проверяем что платёж прошёл — ищем признаки успеха или ошибки
+            print(f"[add_payment] resp_url={resp_url!r} resp_len={len(resp_html)}")
+            # Логируем первые 1000 символов ответа для диагностики
+            print(f"[add_payment] resp_preview={resp_html[:1000]!r}")
+
             success = True
             error_msg = None
-            if "error" in resp_html.lower() or "ошибка" in resp_html.lower():
-                # Ищем текст ошибки
-                err_m = re.search(r'class=["\'][^"\']*error[^"\']*["\'][^>]*>\s*([^<]{5,100})', resp_html, re.IGNORECASE)
+            resp_lower = resp_html.lower()
+            if any(w in resp_lower for w in ["error", "ошибка", "не найден", "not found", "invalid"]):
+                err_m = re.search(r'class=["\'][^"\']*(?:error|alert)[^"\']*["\'][^>]*>\s*<[^>]*>\s*([^<]{5,200})', resp_html, re.IGNORECASE)
+                if not err_m:
+                    err_m = re.search(r'class=["\'][^"\']*(?:error|alert)[^"\']*["\'][^>]*>\s*([^<]{5,200})', resp_html, re.IGNORECASE)
                 if err_m:
                     error_msg = err_m.group(1).strip()
                     success = False
+                    print(f"[add_payment] error found: {error_msg!r}")
 
             return {
                 "statusCode": 200,
@@ -639,6 +699,8 @@ def handler(event: dict, context) -> dict:
                     "contract": contract,
                     "amount": float(amount),
                     "error": error_msg,
+                    "debug_inputs": list(all_inputs.keys()),
+                    "debug_sum_field": sum_field,
                 }, ensure_ascii=False),
             }
 
