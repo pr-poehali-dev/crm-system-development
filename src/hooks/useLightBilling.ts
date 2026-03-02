@@ -131,10 +131,8 @@ export function useLightBilling(): UseLBReturn {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      console.log('[LB createSubscriber] response:', JSON.stringify(data, null, 2));
       return data as LBCreateResult;
-    } catch (e) {
-      console.error('[LB createSubscriber] error:', e);
+    } catch {
       return { success: false, lb_id: '', message: 'Ошибка соединения' };
     }
   }, []);

@@ -549,9 +549,6 @@ def handler(event: dict, context) -> dict:
             
             success = bool(new_id) or "успешно" in result_html.lower() or "success" in result_html.lower()
             
-            # Отладочный сниппет (первые 500 символов ответа)
-            debug_snippet = result_html[:500].replace('\n', ' ').replace('\r', '')
-            
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
@@ -559,10 +556,6 @@ def handler(event: dict, context) -> dict:
                     "success": success,
                     "lb_id": new_id,
                     "message": "Абонент создан" if success else "Не удалось создать абонента",
-                    "debug_resp_url": resp_url,
-                    "debug_resp_code": resp_code,
-                    "debug_html": debug_snippet,
-                    "post_fields": post_fields,
                 }, ensure_ascii=False),
             }
         
