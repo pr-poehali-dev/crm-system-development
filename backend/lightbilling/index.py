@@ -523,16 +523,34 @@ def handler(event: dict, context) -> dict:
             req.add_header("Content-Type", "application/x-www-form-urlencoded")
             req.add_header("Referer", LB_BASE + "?page=users/edit")
             
+            resp_url = ""
+            resp_code = 0
             with urllib.request.urlopen(req, timeout=15) as resp:
                 result_html = resp.read().decode("utf-8", errors="replace")
+                resp_url = resp.geturl()
+                resp_code = resp.getcode()
             
-            # Извлекаем ID нового абонента из редиректа или страницы
+            # Извлекаем ID нового абонента из URL редиректа или тела страницы
             new_id = ""
-            id_match = re.search(r'page=users/view&id=(\d+)', result_html)
-            if id_match:
-                new_id = id_match.group(1)
+            # 1) из финального URL (редирект на users/view)
+            url_match = re.search(r'page=users/view&id=(\d+)', resp_url)
+            if url_match:
+                new_id = url_match.group(1)
+            # 2) из тела HTML
+            if not new_id:
+                id_match = re.search(r'page=users[/\\]view[&?]id=(\d+)', result_html)
+                if id_match:
+                    new_id = id_match.group(1)
+            # 3) ищем любой id= после users/view в ссылках
+            if not new_id:
+                id_match2 = re.search(r'users/view.*?id=(\d+)', result_html)
+                if id_match2:
+                    new_id = id_match2.group(1)
             
             success = bool(new_id) or "успешно" in result_html.lower() or "success" in result_html.lower()
+            
+            # Отладочный сниппет (первые 500 символов ответа)
+            debug_snippet = result_html[:500].replace('\n', ' ').replace('\r', '')
             
             return {
                 "statusCode": 200,
@@ -540,7 +558,11 @@ def handler(event: dict, context) -> dict:
                 "body": json.dumps({
                     "success": success,
                     "lb_id": new_id,
-                    "message": "Абонент создан" if success else "Не удалось определить результат создания",
+                    "message": "Абонент создан" if success else "Не удалось создать абонента",
+                    "debug_resp_url": resp_url,
+                    "debug_resp_code": resp_code,
+                    "debug_html": debug_snippet,
+                    "post_fields": post_fields,
                 }, ensure_ascii=False),
             }
         

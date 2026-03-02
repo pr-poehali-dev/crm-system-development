@@ -6,6 +6,7 @@ type Module =
   | 'dashboard'
   | 'employees'
   | 'events'
+  | 'calendar'
   | 'warehouse'
   | 'cash'
   | 'acts'
@@ -24,6 +25,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Главная', icon: 'LayoutDashboard' },
   { id: 'events', label: 'Заявки', icon: 'ClipboardList', group: 'Сервис' },
+  { id: 'calendar', label: 'Календарь подключений', icon: 'CalendarDays', group: 'Сервис' },
   { id: 'warehouse', label: 'Склад', icon: 'Package', group: 'Склад' },
   { id: 'cash', label: 'Касса', icon: 'Receipt', group: 'Финансы' },
   { id: 'acts', label: 'Акты работ', icon: 'FileCheck', group: 'Финансы' },

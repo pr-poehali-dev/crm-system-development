@@ -10,11 +10,13 @@ import Reports from '@/components/modules/Reports';
 import Salary from '@/components/modules/Salary';
 import Contacts from '@/components/modules/Contacts';
 import Settings from '@/components/modules/Settings';
+import ServiceCalendar from '@/components/modules/ServiceCalendar';
 
 type Module =
   | 'dashboard'
   | 'employees'
   | 'events'
+  | 'calendar'
   | 'warehouse'
   | 'cash'
   | 'acts'
@@ -65,6 +67,7 @@ export default function Index() {
     switch (module) {
       case 'dashboard': return <Dashboard />;
       case 'employees': return <Employees {...props} />;
+      case 'calendar': return <ServiceCalendar {...props} />;
       case 'events': {
         const prefill = pendingTicket || undefined;
         return (

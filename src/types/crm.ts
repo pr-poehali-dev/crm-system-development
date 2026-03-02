@@ -77,12 +77,28 @@ export interface CRMEvent {
   resolvedAt?: string;
 }
 
+export interface TimeSlot {
+  id: string;
+  time: string;       // "09:00"
+  brigades: number;   // количество бригад (= мест)
+}
+
 export interface CalendarSlotSettings {
   officeId: string;
-  slotsPerDay: number;
-  workDays: number[];
-  startTime: string;
-  endTime: string;
+  weekdaySlots: TimeSlot[];    // слоты для будних дней (Пн-Пт)
+  weekendSlots: TimeSlot[];    // слоты для выходных (Сб-Вс)
+  specialDates: SpecialDate[]; // особые даты
+  // legacy (для совместимости)
+  slotsPerDay?: number;
+  workDays?: number[];
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface SpecialDate {
+  date: string;      // "2026-03-08"
+  slots: TimeSlot[];
+  label?: string;    // "8 Марта"
 }
 
 export interface Connection {

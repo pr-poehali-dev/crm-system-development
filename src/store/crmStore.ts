@@ -154,9 +154,21 @@ const INIT_PRODUCTS: Product[] = [
   { id: '4', categoryId: '3', name: 'Клипсы монтажные', sku: 'CL-100', unit: 'уп', description: 'Упаковка 100 шт', price: 90 },
 ];
 
+const defaultWeekdaySlots = () => [
+  { id: 'w1', time: '09:00', brigades: 2 },
+  { id: 'w2', time: '11:00', brigades: 2 },
+  { id: 'w3', time: '13:00', brigades: 1 },
+  { id: 'w4', time: '15:00', brigades: 2 },
+  { id: 'w5', time: '17:00', brigades: 1 },
+];
+const defaultWeekendSlots = () => [
+  { id: 'we1', time: '10:00', brigades: 1 },
+  { id: 'we2', time: '14:00', brigades: 1 },
+];
+
 const INIT_CALENDAR_SETTINGS: CalendarSlotSettings[] = [
-  { officeId: '1', slotsPerDay: 6, workDays: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00' },
-  { officeId: '2', slotsPerDay: 4, workDays: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '17:00' },
+  { officeId: '1', weekdaySlots: defaultWeekdaySlots(), weekendSlots: defaultWeekendSlots(), specialDates: [] },
+  { officeId: '2', weekdaySlots: defaultWeekdaySlots(), weekendSlots: defaultWeekendSlots(), specialDates: [] },
 ];
 
 const INIT_CASH_REGISTERS: CashRegister[] = [
