@@ -1,0 +1,28 @@
+{
+  "tests": [
+    {
+      "name": "GET subscribers - список абонентов",
+      "method": "GET",
+      "path": "/?action=subscribers&search=&limit=10",
+      "expectedStatus": 200,
+      "expectedBody": {"subscribers": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET search - поиск абонента",
+      "method": "GET",
+      "path": "/?action=subscribers&search=тест&limit=10",
+      "expectedStatus": 200,
+      "bodyMatcher": "partial",
+      "expectedBody": {"total": 0}
+    },
+    {
+      "name": "OPTIONS CORS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": "",
+      "bodyMatcher": "partial"
+    }
+  ]
+}
