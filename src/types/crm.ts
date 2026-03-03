@@ -58,6 +58,8 @@ export interface CRMEvent {
   type: EventType;
   status: EventStatus;
   priority: 'low' | 'medium' | 'high';
+  ticketNumber?: string;
+  managerId?: string;
   subscriberId?: string;
   subscriberLbId?: string;
   subscriberName: string;
