@@ -882,7 +882,12 @@ def handler(event: dict, context) -> dict:
                 price_idx = -1
                 date_idx = -1
                 for i, h in enumerate(headers):
-                    if any(k in h for k in ['тариф', 'tariff', 'наим', 'name', 'услуг', 'план']) and name_idx < 0:
+                    # Пропускаем колонки-номера (#, # тарифа и т.п.) — они содержат ID, не имя
+                    is_id_col = h.strip().startswith('#') or h.strip() in ('id', '№', 'номер')
+                    if not is_id_col and any(k in h for k in ['наим', 'name', 'услуг', 'план']) and name_idx < 0:
+                        name_idx = i
+                    # тариф/tariff без # — тоже может быть именем
+                    if not is_id_col and any(k in h for k in ['тариф', 'tariff']) and name_idx < 0:
                         name_idx = i
                     if any(k in h for k in ['стоим', 'сумм', 'price', 'amount', 'цена', 'руб']) and price_idx < 0:
                         price_idx = i
