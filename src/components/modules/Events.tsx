@@ -6,6 +6,14 @@ import { useLightBilling, LBSubscriber, LBTariff } from '@/hooks/useLightBilling
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
+function genTicketNum(events: CRMEvent[]): string {
+  const nums = events
+    .map(e => { const m = e.ticketNumber?.match(/^А-(\d+)$/); return m ? parseInt(m[1], 10) : 0; })
+    .filter(n => n > 0);
+  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+  return `А-${String(next).padStart(3, '0')}`;
+}
+
 const TYPE_CONFIG: Record<EventType, { label: string; icon: string; color: string; bg: string }> = {
   breakdown: { label: 'Поломка', icon: 'Wrench', color: 'text-[#ef4444]', bg: 'bg-[#ef4444]/20' },
   connection: { label: 'Подключение', icon: 'Wifi', color: 'text-[#10b981]', bg: 'bg-[#10b981]/20' },
@@ -59,7 +67,7 @@ export default function Events({ onOpenPanel, onClosePanel, prefilledSubscriber 
         employees={employees.filter((e) => e.status === 'active')}
         onSave={(data) => {
           if (event) updateEvent(event.id, data);
-          else addEvent({ id: uid(), officeId: currentOfficeId, ...data, createdAt: new Date().toISOString() } as CRMEvent);
+          else addEvent({ id: uid(), officeId: currentOfficeId, ticketNumber: genTicketNum(events), ...data, createdAt: new Date().toISOString() } as CRMEvent);
           onClosePanel();
         }}
         onCancel={onClosePanel}
@@ -124,52 +132,110 @@ export default function Events({ onOpenPanel, onClosePanel, prefilledSubscriber 
         })}
       </div>
 
-      {/* List */}
-      <div className="space-y-2">
-        {filtered.length === 0 && (
-          <div className="py-16 text-center">
-            <Icon name="ClipboardList" size={32} className="text-[#252d3d] mx-auto mb-3" />
-            <div className="text-sm text-[#4b5568]">Заявок нет</div>
-          </div>
-        )}
-        {filtered.map((event) => {
-          const tech = employees.find((e) => e.id === event.technicianId);
-          const cfg = TYPE_CONFIG[event.type];
-          const sCfg = STATUS_CONFIG[event.status];
-          return (
-            <div
-              key={event.id}
-              className="bg-[#161b27] border border-[#252d3d] rounded-xl p-4 hover:border-[#3b82f6]/30 transition-colors cursor-pointer"
-              onClick={() => openEventForm(event)}
-            >
-              <div className="flex items-start gap-3">
-                <div className={`w-9 h-9 rounded-xl ${cfg.bg} flex items-center justify-center flex-shrink-0`}>
-                  <Icon name={cfg.icon} size={16} className={cfg.color} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-sm font-semibold text-white truncate">{event.subscriberName}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${sCfg.color}`}>{sCfg.label}</span>
-                    <span className={`text-xs font-medium ${PRIORITY_CONFIG[event.priority].color}`}>● {PRIORITY_CONFIG[event.priority].label}</span>
-                  </div>
-                  <div className="text-xs text-[#4b5568] mb-1">{event.subscriberAddress}</div>
-                  {event.problem && <div className="text-xs text-[#8892a4]">{event.problem}</div>}
-                  {event.type === 'connection' && event.tariffName && (
-                    <div className="text-xs text-[#10b981]">Тариф: {event.tariffName}</div>
-                  )}
-                  {event.type === 'paid_call' && event.amount && (
-                    <div className="text-xs text-[#f59e0b]">{event.amount.toLocaleString('ru-RU')} ₽</div>
-                  )}
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-xs text-[#4b5568]">{event.date}</div>
-                  {event.timeSlot && <div className="text-xs text-[#8892a4]">{event.timeSlot}</div>}
-                  {tech && <div className="text-xs text-[#4b5568] mt-1">{tech.lastName} {tech.firstName[0]}.</div>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-[#252d3d]">
+        <table className="w-full text-sm" style={{ minWidth: 960 }}>
+          <thead>
+            <tr className="bg-[#0f1117] border-b border-[#252d3d]">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Номер</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Статус</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Менеджер</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Абонент</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Адрес</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Описание</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Исполнитель</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-[#4b5568] uppercase tracking-wide">Желаемая дата</th>
+              <th className="px-4 py-3 w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={9} className="py-16 text-center bg-[#161b27]">
+                  <Icon name="ClipboardList" size={32} className="text-[#252d3d] mx-auto mb-3" />
+                  <div className="text-sm text-[#4b5568]">Заявок нет</div>
+                </td>
+              </tr>
+            )}
+            {filtered.map((event) => {
+              const tech = employees.find((e) => e.id === event.technicianId);
+              const manager = employees.find((e) => e.id === event.managerId);
+              const cfg = TYPE_CONFIG[event.type];
+              const sCfg = STATUS_CONFIG[event.status];
+              return (
+                <tr
+                  key={event.id}
+                  onClick={() => openEventForm(event)}
+                  className="border-b border-[#252d3d] last:border-0 hover:bg-[#1e2637]/60 cursor-pointer transition-colors bg-[#161b27]"
+                >
+                  {/* Номер */}
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-mono font-bold text-white">{event.ticketNumber || '—'}</span>
+                      <span className={`text-[10px] flex items-center gap-0.5 ${cfg.color}`}>
+                        <Icon name={cfg.icon} size={9} />{cfg.label}
+                      </span>
+                    </div>
+                  </td>
+                  {/* Статус — меняется инлайн */}
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={event.status}
+                      onChange={(e) => updateEvent(event.id, { status: e.target.value as EventStatus })}
+                      className={`text-xs px-2 py-1 rounded-md border font-medium cursor-pointer bg-transparent focus:outline-none ${sCfg.color} border-current/30`}
+                    >
+                      <option value="new">Новая</option>
+                      <option value="in_progress">В работе</option>
+                      <option value="done">Выполнена</option>
+                      <option value="cancelled">Отменена</option>
+                    </select>
+                  </td>
+                  {/* Менеджер + дата создания */}
+                  <td className="px-4 py-3">
+                    {manager && <div className="text-xs text-white">{manager.lastName} {manager.firstName}</div>}
+                    <div className="text-[10px] text-[#4b5568]">
+                      {new Date(event.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </td>
+                  {/* Абонент */}
+                  <td className="px-4 py-3">
+                    <span className="text-sm text-white">{event.subscriberName || '—'}</span>
+                    {event.subscriberPhone && <div className="text-[10px] text-[#4b5568]">{event.subscriberPhone}</div>}
+                  </td>
+                  {/* Адрес */}
+                  <td className="px-4 py-3 max-w-[160px]">
+                    <span className="text-xs text-[#8892a4] line-clamp-2">{event.subscriberAddress || '—'}</span>
+                  </td>
+                  {/* Описание */}
+                  <td className="px-4 py-3 max-w-[200px]">
+                    <span className="text-xs text-[#8892a4] line-clamp-2">{event.problem || '—'}</span>
+                  </td>
+                  {/* Исполнитель */}
+                  <td className="px-4 py-3">
+                    {tech
+                      ? <span className="text-xs text-[#8892a4]">{tech.lastName} {tech.firstName[0]}.</span>
+                      : <span className="text-xs text-[#4b5568]">—</span>}
+                  </td>
+                  {/* Желаемая дата */}
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-[#8892a4]">
+                      {event.date ? new Date(event.date).toLocaleDateString('ru-RU') : '—'}
+                    </span>
+                  </td>
+                  {/* Удалить */}
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => deleteEvent(event.id)}
+                      className="p-1.5 hover:bg-[#ef4444]/20 rounded text-[#4b5568] hover:text-[#ef4444] transition-colors"
+                    >
+                      <Icon name="Trash2" size={13} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -190,6 +256,7 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
   const [status, setStatus] = useState<EventStatus>(event?.status || 'new');
   const [priority, setPriority] = useState<CRMEvent['priority']>(event?.priority || 'medium');
   const [technicianId, setTechnicianId] = useState(event?.technicianId || '');
+  const [managerId, setManagerId] = useState(event?.managerId || '');
   const [date, setDate] = useState(event?.date || new Date().toISOString().split('T')[0]);
   const [timeSlot, setTimeSlot] = useState(event?.timeSlot || '');
   const [problem, setProblem] = useState(event?.problem || '');
@@ -305,7 +372,7 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
     const name = type === 'connection' ? newSubName || subName : subName;
     if (!name) return;
     onSave({
-      type, status, priority, technicianId, date, timeSlot,
+      type, status, priority, technicianId, managerId, date, timeSlot,
       subscriberName: name,
       subscriberAddress: type === 'connection' ? newSubAddress || subAddress : subAddress,
       subscriberPhone: type === 'connection' ? newSubPhone || subPhone : subPhone,
@@ -494,18 +561,25 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
 
       <div className="grid grid-cols-2 gap-3">
         <div>
+          <label className={labelCls}>Менеджер</label>
+          <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className={selectCls}>
+            <option value="">— Выберите —</option>
+            {employees.map((e) => <option key={e.id} value={e.id}>{e.lastName} {e.firstName}</option>)}
+          </select>
+        </div>
+        <div>
           <label className={labelCls}>Исполнитель</label>
           <select value={technicianId} onChange={(e) => setTechnicianId(e.target.value)} className={selectCls}>
             <option value="">— Выберите —</option>
             {employees.map((e) => <option key={e.id} value={e.id}>{e.lastName} {e.firstName}</option>)}
           </select>
         </div>
-        <div>
-          <label className={labelCls}>Приоритет</label>
-          <select value={priority} onChange={(e) => setPriority(e.target.value as CRMEvent['priority'])} className={selectCls}>
-            {Object.entries(PRIORITY_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-        </div>
+      </div>
+      <div>
+        <label className={labelCls}>Приоритет</label>
+        <select value={priority} onChange={(e) => setPriority(e.target.value as CRMEvent['priority'])} className={selectCls}>
+          {Object.entries(PRIORITY_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
       </div>
 
       <div>
