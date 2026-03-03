@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCRMStore } from '@/store/crmStore';
-import { Subscriber, CashRegister } from '@/types/crm';
+import { Subscriber, CashRegister, Supplier } from '@/types/crm';
 import Icon from '@/components/ui/icon';
 import { useLightBilling, LBSubscriber, LBSubscriberTariff, LBPaymentHistory, LBPromisedFormInfo } from '@/hooks/useLightBilling';
 
@@ -133,9 +133,107 @@ function lbToSubscriber(lb: LBSubscriber): Subscriber {
   };
 }
 
+type ContactsTab = 'subscribers' | 'suppliers';
+
+function SupplierPanel({ onOpenPanel, onClosePanel }: { onOpenPanel: Props['onOpenPanel']; onClosePanel: Props['onClosePanel'] }) {
+  const { suppliers, addSupplier, updateSupplier, deleteSupplier } = useCRMStore();
+  const [search, setSearch] = useState('');
+  const inputCls2 = 'w-full bg-[#0f1117] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] transition-colors';
+  const labelCls2 = 'block text-xs font-medium text-[#8892a4] mb-1.5 uppercase tracking-wide';
+
+  const filtered = (suppliers || []).filter(s =>
+    !search || s.name.toLowerCase().includes(search.toLowerCase()) ||
+    (s.inn || '').includes(search) ||
+    (s.phone || '').includes(search)
+  );
+
+  const openForm = (sup?: Supplier) => {
+    const Form = ({ sup, onDone }: { sup?: Supplier; onDone: () => void }) => {
+      const [name, setName] = useState(sup?.name || '');
+      const [inn, setInn] = useState(sup?.inn || '');
+      const [phone, setPhone] = useState(sup?.phone || '');
+      const [email, setEmail] = useState(sup?.email || '');
+      const [address, setAddress] = useState(sup?.address || '');
+      const [contactPerson, setContactPerson] = useState(sup?.contactPerson || '');
+      const [notes, setNotes] = useState(sup?.notes || '');
+      const handleSave = () => {
+        const data = { name, inn, phone, email, address, contactPerson, notes };
+        if (sup) updateSupplier(sup.id, data);
+        else addSupplier({ id: Date.now().toString(36) + Math.random().toString(36).slice(2), ...data });
+        onDone();
+      };
+      return (
+        <div className="space-y-4">
+          <div><label className={labelCls2}>Название *</label><input value={name} onChange={e => setName(e.target.value)} className={inputCls2} placeholder="ООО Поставщик" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={labelCls2}>ИНН</label><input value={inn} onChange={e => setInn(e.target.value)} className={inputCls2} /></div>
+            <div><label className={labelCls2}>Телефон</label><input value={phone} onChange={e => setPhone(e.target.value)} className={inputCls2} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={labelCls2}>Email</label><input value={email} onChange={e => setEmail(e.target.value)} className={inputCls2} /></div>
+            <div><label className={labelCls2}>Контактное лицо</label><input value={contactPerson} onChange={e => setContactPerson(e.target.value)} className={inputCls2} /></div>
+          </div>
+          <div><label className={labelCls2}>Адрес</label><input value={address} onChange={e => setAddress(e.target.value)} className={inputCls2} /></div>
+          <div><label className={labelCls2}>Примечания</label><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls2} /></div>
+          <div className="flex gap-2 pt-2">
+            <button onClick={handleSave} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+              {sup ? 'Сохранить' : 'Создать'}
+            </button>
+            <button onClick={onDone} className="px-4 py-2.5 bg-[#1e2637] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
+            {sup && <button onClick={() => { deleteSupplier(sup.id); onDone(); }} className="px-3 py-2.5 bg-[#ef4444]/10 text-[#ef4444] rounded-lg text-sm transition-colors"><Icon name="Trash2" size={14} /></button>}
+          </div>
+        </div>
+      );
+    };
+    onOpenPanel(sup ? 'Редактировать поставщика' : 'Новый поставщик', <Form sup={sup} onDone={onClosePanel} />);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <div className="flex-1 relative">
+          <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4b5568]" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск поставщика..." className="w-full bg-[#1e2637] border border-[#252d3d] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6]" />
+        </div>
+        <button onClick={() => openForm()} className="flex items-center gap-1.5 px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-xs font-medium transition-colors">
+          <Icon name="Plus" size={13} />Новый поставщик
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="py-16 text-center">
+          <Icon name="Truck" size={40} className="text-[#252d3d] mx-auto mb-3" />
+          <div className="text-sm text-[#4b5568]">Поставщики не добавлены</div>
+          <button onClick={() => openForm()} className="mt-3 px-4 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm transition-colors">
+            Добавить первого
+          </button>
+        </div>
+      ) : (
+        <div className="bg-[#161b27] border border-[#252d3d] rounded-xl overflow-hidden">
+          {filtered.map(s => (
+            <div key={s.id} onClick={() => openForm(s)} className="flex items-center gap-4 px-4 py-3 border-b border-[#252d3d] last:border-0 hover:bg-[#1e2637] cursor-pointer transition-colors">
+              <div className="w-9 h-9 rounded-xl bg-[#3b82f6]/10 flex items-center justify-center flex-shrink-0">
+                <Icon name="Truck" size={16} className="text-[#3b82f6]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-white">{s.name}</div>
+                <div className="text-xs text-[#4b5568] mt-0.5">
+                  {[s.inn && `ИНН: ${s.inn}`, s.contactPerson, s.phone].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <Icon name="ChevronRight" size={14} className="text-[#4b5568]" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: Props) {
   const { subscribers: localSubs, cashRegisters, cashPayments, currentOfficeId, addCashPayment, updateSubscriber, appSettings } = useCRMStore();
   const lb = useLightBilling();
+  const [contactsTab, setContactsTab] = useState<ContactsTab>('subscribers');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | Subscriber['status']>('all');
   const [source, setSource] = useState<'local' | 'lb'>('lb');
@@ -232,6 +330,28 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
 
   return (
     <div className="space-y-4">
+      {/* Tab switcher */}
+      <div className="flex gap-1 bg-[#161b27] border border-[#252d3d] rounded-xl p-1">
+        <button
+          onClick={() => setContactsTab('subscribers')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${contactsTab === 'subscribers' ? 'bg-[#3b82f6] text-white' : 'text-[#8892a4] hover:text-white'}`}
+        >
+          <Icon name="Users" size={13} />Абоненты
+        </button>
+        <button
+          onClick={() => setContactsTab('suppliers')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${contactsTab === 'suppliers' ? 'bg-[#3b82f6] text-white' : 'text-[#8892a4] hover:text-white'}`}
+        >
+          <Icon name="Truck" size={13} />Поставщики
+        </button>
+      </div>
+
+      {contactsTab === 'suppliers' && (
+        <SupplierPanel onOpenPanel={onOpenPanel} onClosePanel={onClosePanel} />
+      )}
+
+      {contactsTab === 'subscribers' && <>
+
       {/* Source toggle + sync */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -377,6 +497,7 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
           Данные из LightBilling · {lb.total} абонентов загружено
         </div>
       )}
+      </>}
     </div>
   );
 }

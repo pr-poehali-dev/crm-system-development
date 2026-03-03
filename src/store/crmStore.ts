@@ -5,7 +5,7 @@ import {
   Connection, ServiceTicket, PaidCall, CalendarSlotSettings,
   Warehouse, Category, Product, StockOperation, WarehouseStock,
   CashRegister, Sale, WorkAct, Subscriber, SalarySheet, CRMEvent,
-  CashPayment, ExpenseCategory,
+  CashPayment, ExpenseCategory, Supplier,
 } from '../types/crm';
 
 interface CRMState {
@@ -24,6 +24,7 @@ interface CRMState {
   products: Product[];
   stockOperations: StockOperation[];
   warehouseStock: WarehouseStock[];
+  suppliers: Supplier[];
   cashRegisters: CashRegister[];
   cashPayments: CashPayment[];
   expenseCategories: ExpenseCategory[];
@@ -80,6 +81,10 @@ interface CRMState {
   deleteProduct: (id: string) => void;
 
   addStockOperation: (op: StockOperation) => void;
+
+  addSupplier: (s: Supplier) => void;
+  updateSupplier: (id: string, data: Partial<Supplier>) => void;
+  deleteSupplier: (id: string) => void;
 
   addCashRegister: (cr: CashRegister) => void;
   updateCashRegister: (id: string, data: Partial<CashRegister>) => void;
@@ -197,6 +202,8 @@ const INIT_EXPENSE_CATEGORIES: ExpenseCategory[] = [
   { id: '6', name: 'Оборудование', description: 'Закупка оборудования' },
 ];
 
+const INIT_SUPPLIERS: Supplier[] = [];
+
 const INIT_WAREHOUSES: Warehouse[] = [
   { id: '1', officeId: '1', name: 'Основной склад', address: 'г. Абакан, ул. Ленина 1', description: 'Главный склад Абакан' },
   { id: '2', officeId: '2', name: 'Склад Шушенское', address: 'пгт. Шушенское, ул. Советская 5', description: 'Склад Шушенское' },
@@ -240,6 +247,7 @@ export const useCRMStore = create<CRMState>()(
       products: INIT_PRODUCTS,
       stockOperations: [],
       warehouseStock: [],
+      suppliers: INIT_SUPPLIERS,
       cashRegisters: INIT_CASH_REGISTERS,
       cashPayments: [],
       expenseCategories: INIT_EXPENSE_CATEGORIES,
@@ -304,20 +312,46 @@ export const useCRMStore = create<CRMState>()(
 
       addStockOperation: (op) => set((s) => {
         const newStock = [...s.warehouseStock];
-        const stockIdx = newStock.findIndex((st) => st.warehouseId === op.warehouseId && st.productId === op.productId);
-        if (op.type === 'receipt' || op.type === 'return') {
-          if (stockIdx >= 0) newStock[stockIdx] = { ...newStock[stockIdx], quantity: newStock[stockIdx].quantity + op.quantity };
-          else newStock.push({ warehouseId: op.warehouseId, productId: op.productId, quantity: op.quantity });
-        } else if (op.type === 'writeoff' || op.type === 'sale') {
-          if (stockIdx >= 0) newStock[stockIdx] = { ...newStock[stockIdx], quantity: Math.max(0, newStock[stockIdx].quantity - op.quantity) };
-        } else if (op.type === 'transfer' && op.toWarehouseId) {
-          if (stockIdx >= 0) newStock[stockIdx] = { ...newStock[stockIdx], quantity: Math.max(0, newStock[stockIdx].quantity - op.quantity) };
-          const toIdx = newStock.findIndex((st) => st.warehouseId === op.toWarehouseId && st.productId === op.productId);
-          if (toIdx >= 0) newStock[toIdx] = { ...newStock[toIdx], quantity: newStock[toIdx].quantity + op.quantity };
-          else newStock.push({ warehouseId: op.toWarehouseId!, productId: op.productId, quantity: op.quantity });
+
+        const applyItems = (items: Array<{ productId: string; quantity: number; serialNumbers?: string[] }>, whId: string, toWhId?: string) => {
+          for (const item of items) {
+            const idx = newStock.findIndex((st) => st.warehouseId === whId && st.productId === item.productId);
+            if (op.type === 'receipt' || op.type === 'return') {
+              const newSerials = [...(newStock[idx]?.serialNumbers || []), ...(item.serialNumbers || [])];
+              if (idx >= 0) newStock[idx] = { ...newStock[idx], quantity: newStock[idx].quantity + item.quantity, serialNumbers: newSerials };
+              else newStock.push({ warehouseId: whId, productId: item.productId, quantity: item.quantity, serialNumbers: item.serialNumbers || [] });
+            } else if (op.type === 'writeoff' || op.type === 'sale') {
+              if (idx >= 0) {
+                const removeSerials = item.serialNumbers || [];
+                const remaining = (newStock[idx].serialNumbers || []).filter(sn => !removeSerials.includes(sn));
+                newStock[idx] = { ...newStock[idx], quantity: Math.max(0, newStock[idx].quantity - item.quantity), serialNumbers: remaining };
+              }
+            } else if (op.type === 'transfer' && toWhId) {
+              if (idx >= 0) {
+                const removeSerials = item.serialNumbers || [];
+                const remaining = (newStock[idx].serialNumbers || []).filter(sn => !removeSerials.includes(sn));
+                newStock[idx] = { ...newStock[idx], quantity: Math.max(0, newStock[idx].quantity - item.quantity), serialNumbers: remaining };
+              }
+              const toIdx = newStock.findIndex((st) => st.warehouseId === toWhId && st.productId === item.productId);
+              const addSerials = [...(newStock[toIdx]?.serialNumbers || []), ...(item.serialNumbers || [])];
+              if (toIdx >= 0) newStock[toIdx] = { ...newStock[toIdx], quantity: newStock[toIdx].quantity + item.quantity, serialNumbers: addSerials };
+              else newStock.push({ warehouseId: toWhId, productId: item.productId, quantity: item.quantity, serialNumbers: item.serialNumbers || [] });
+            }
+          }
+        };
+
+        if (op.items && op.items.length > 0) {
+          applyItems(op.items, op.warehouseId, op.toWarehouseId);
+        } else {
+          applyItems([{ productId: op.productId, quantity: op.quantity, serialNumbers: [] }], op.warehouseId, op.toWarehouseId);
         }
+
         return { stockOperations: [...s.stockOperations, op], warehouseStock: newStock };
       }),
+
+      addSupplier: (s_) => set((s) => ({ suppliers: [...s.suppliers, s_] })),
+      updateSupplier: (id, data) => set((s) => ({ suppliers: s.suppliers.map((sup) => sup.id === id ? { ...sup, ...data } : sup) })),
+      deleteSupplier: (id) => set((s) => ({ suppliers: s.suppliers.filter((sup) => sup.id !== id) })),
 
       addCashRegister: (cr) => set((s) => ({ cashRegisters: [...s.cashRegisters, cr] })),
       updateCashRegister: (id, data) => set((s) => ({ cashRegisters: s.cashRegisters.map((c) => c.id === id ? { ...c, ...data } : c) })),

@@ -1,33 +1,33 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useCRMStore } from '@/store/crmStore';
 import {
-  Warehouse as WarehouseType, Category, Product, StockOperation, StockOperationType,
+  Warehouse as WarehouseType, Category, Product, StockOperationType, StockOperationItem, Supplier,
 } from '@/types/crm';
 import Icon from '@/components/ui/icon';
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
-const inputCls = 'w-full bg-[#0f1117] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] transition-colors';
+const inputCls = 'w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--foreground)] placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] transition-colors';
 const labelCls = 'block text-xs font-medium text-[#8892a4] mb-1.5 uppercase tracking-wide';
 
 const OP_CONFIG: Record<StockOperationType, { label: string; icon: string; color: string; bg: string; btnBg: string }> = {
-  receipt:  { label: 'Приход',       icon: 'ArrowDownToLine', color: 'text-[#10b981]', bg: 'bg-[#10b981]/15 border-[#10b981]/30', btnBg: 'bg-[#10b981] hover:bg-[#059669]' },
-  writeoff: { label: 'Списание',     icon: 'ArrowUpFromLine', color: 'text-[#ef4444]', bg: 'bg-[#ef4444]/15 border-[#ef4444]/30', btnBg: 'bg-[#ef4444] hover:bg-[#dc2626]' },
-  transfer: { label: 'Перемещение',  icon: 'ArrowLeftRight',  color: 'text-[#3b82f6]', bg: 'bg-[#3b82f6]/15 border-[#3b82f6]/30', btnBg: 'bg-[#3b82f6] hover:bg-[#2563eb]' },
-  sale:     { label: 'Продажа',      icon: 'ShoppingCart',    color: 'text-[#f59e0b]', bg: 'bg-[#f59e0b]/15 border-[#f59e0b]/30', btnBg: 'bg-[#f59e0b] hover:bg-[#d97706]' },
-  return:   { label: 'Возврат',      icon: 'Undo2',           color: 'text-[#8b5cf6]', bg: 'bg-[#8b5cf6]/15 border-[#8b5cf6]/30', btnBg: 'bg-[#8b5cf6] hover:bg-[#7c3aed]' },
+  receipt:  { label: 'Оприходование', icon: 'ArrowDownToLine', color: 'text-[#10b981]', bg: 'bg-[#10b981]/15 border-[#10b981]/30', btnBg: 'bg-[#10b981] hover:bg-[#059669]' },
+  writeoff: { label: 'Списание',      icon: 'ArrowUpFromLine', color: 'text-[#ef4444]', bg: 'bg-[#ef4444]/15 border-[#ef4444]/30', btnBg: 'bg-[#ef4444] hover:bg-[#dc2626]' },
+  transfer: { label: 'Перемещение',   icon: 'ArrowLeftRight',  color: 'text-[#3b82f6]', bg: 'bg-[#3b82f6]/15 border-[#3b82f6]/30', btnBg: 'bg-[#3b82f6] hover:bg-[#2563eb]' },
+  sale:     { label: 'Продажа',       icon: 'ShoppingCart',    color: 'text-[#f59e0b]', bg: 'bg-[#f59e0b]/15 border-[#f59e0b]/30', btnBg: 'bg-[#f59e0b] hover:bg-[#d97706]' },
+  return:   { label: 'Возврат',       icon: 'Undo2',           color: 'text-[#8b5cf6]', bg: 'bg-[#8b5cf6]/15 border-[#8b5cf6]/30', btnBg: 'bg-[#8b5cf6] hover:bg-[#7c3aed]' },
 };
 
 const UNITS = ['шт', 'м', 'кг', 'л', 'уп', 'рул', 'компл'];
 
 type Tab = 'residue' | 'income' | 'outcome' | 'move' | 'products' | 'operations';
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'residue',    label: 'Остатки',     icon: 'LayoutGrid' },
-  { id: 'income',     label: 'Приход',      icon: 'ArrowDownToLine' },
-  { id: 'outcome',    label: 'Списание',    icon: 'ArrowUpFromLine' },
-  { id: 'move',       label: 'Перемещение', icon: 'ArrowLeftRight' },
-  { id: 'products',   label: 'Номенклатура',icon: 'Package' },
-  { id: 'operations', label: 'История',     icon: 'ClipboardList' },
+  { id: 'residue',    label: 'Остатки',        icon: 'LayoutGrid' },
+  { id: 'income',     label: 'Оприходования',  icon: 'ArrowDownToLine' },
+  { id: 'outcome',    label: 'Списание',        icon: 'ArrowUpFromLine' },
+  { id: 'move',       label: 'Перемещение',     icon: 'ArrowLeftRight' },
+  { id: 'products',   label: 'Номенклатура',    icon: 'Package' },
+  { id: 'operations', label: 'История',         icon: 'ClipboardList' },
 ];
 
 interface Props {
@@ -35,12 +35,793 @@ interface Props {
   onClosePanel: () => void;
 }
 
+/* ─── Компонент поиска + выпадающего списка товаров ─── */
+interface ProductSearchProps {
+  products: Product[];
+  onSelect: (p: Product) => void;
+  placeholder?: string;
+}
+function ProductSearch({ products, onSelect, placeholder = 'Поиск товара...' }: ProductSearchProps) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    if (!q.trim()) return products.slice(0, 40);
+    const lq = q.toLowerCase();
+    return products.filter(p =>
+      p.name.toLowerCase().includes(lq) ||
+      p.sku.toLowerCase().includes(lq)
+    ).slice(0, 40);
+  }, [q, products]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <input
+        value={q}
+        onChange={e => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className={inputCls}
+        placeholder={placeholder}
+      />
+      {open && (
+        <div className="absolute z-50 w-full mt-1 bg-[#161b27] border border-[#252d3d] rounded-xl shadow-xl max-h-64 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-3 text-sm text-[#4b5568]">Ничего не найдено</div>
+          ) : filtered.map(p => (
+            <button
+              key={p.id}
+              onMouseDown={() => { onSelect(p); setQ(''); setOpen(false); }}
+              className="w-full text-left px-3 py-2 hover:bg-[#1e2637] transition-colors"
+            >
+              <div className="text-sm text-[var(--foreground)]">{p.name}</div>
+              <div className="text-xs text-[#4b5568]">{p.sku} · {p.unit}{p.isSerial ? ' · серийный' : ''}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Строка товара в таблице операции ─── */
+interface ItemRowProps {
+  item: StockOperationItem & { _product?: Product; _serials?: string };
+  products: Product[];
+  showPrice: boolean;
+  onChange: (updated: StockOperationItem & { _product?: Product; _serials?: string }) => void;
+  onRemove: () => void;
+}
+function ItemRow({ item, showPrice, onChange, onRemove }: ItemRowProps) {
+  const product = item._product;
+  return (
+    <div className="grid gap-2 items-start" style={{ gridTemplateColumns: showPrice ? '1fr 80px 100px 90px 28px' : '1fr 80px 28px' }}>
+      <div>
+        <div className="text-sm text-[var(--foreground)] font-medium">{product?.name || '—'}</div>
+        <div className="text-xs text-[#4b5568]">{product?.sku}</div>
+        {product?.isSerial && (
+          <input
+            value={item._serials || ''}
+            onChange={e => onChange({ ...item, _serials: e.target.value })}
+            className={inputCls + ' mt-1 text-xs'}
+            placeholder="Серийные номера через запятую"
+          />
+        )}
+      </div>
+      <input
+        type="number"
+        min={1}
+        value={item.quantity}
+        onChange={e => {
+          const qty = Math.max(1, +e.target.value);
+          onChange({ ...item, quantity: qty, amount: qty * (item.price || 0) });
+        }}
+        className={inputCls + ' text-center'}
+      />
+      {showPrice && (
+        <>
+          <input
+            type="number"
+            min={0}
+            value={item.price}
+            onChange={e => {
+              const price = +e.target.value;
+              onChange({ ...item, price, amount: item.quantity * price });
+            }}
+            className={inputCls}
+            placeholder="Цена"
+          />
+          <div className="flex items-center h-[38px] text-sm text-[#10b981] font-medium">
+            {(item.amount).toLocaleString('ru-RU')} ₽
+          </div>
+        </>
+      )}
+      <button onClick={onRemove} className="flex items-center justify-center h-[38px] text-[#ef4444] hover:bg-[#ef4444]/10 rounded-lg transition-colors">
+        <Icon name="Trash2" size={14} />
+      </button>
+    </div>
+  );
+}
+
+/* ─── Форма оприходования ─── */
+interface ReceiptFormProps {
+  warehouses: WarehouseType[];
+  products: Product[];
+  suppliers: Supplier[];
+  employeeId: string;
+  onSave: (data: Parameters<ReturnType<typeof useCRMStore>['addStockOperation']>[0]) => void;
+  onCancel: () => void;
+}
+function ReceiptForm({ warehouses, products, suppliers, employeeId, onSave, onCancel }: ReceiptFormProps) {
+  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id || '');
+  const [supplierId, setSupplierId] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState('');
+  const [items, setItems] = useState<Array<StockOperationItem & { _product?: Product; _serials?: string }>>([]);
+  const [addingProduct, setAddingProduct] = useState<Product | null>(null);
+  const [addQty, setAddQty] = useState(1);
+  const [addPrice, setAddPrice] = useState(0);
+  const [addSerials, setAddSerials] = useState('');
+
+  const totalAmount = items.reduce((s, i) => s + i.amount, 0);
+
+  const handleSelectProduct = (p: Product) => setAddingProduct(p);
+
+  const handleAddItem = () => {
+    if (!addingProduct) return;
+    const serials = addSerials.split(',').map(s => s.trim()).filter(Boolean);
+    setItems(prev => [...prev, {
+      productId: addingProduct.id,
+      quantity: addQty,
+      price: addPrice,
+      amount: addQty * addPrice,
+      serialNumbers: serials.length > 0 ? serials : undefined,
+      _product: addingProduct,
+      _serials: addSerials,
+    }]);
+    setAddingProduct(null);
+    setAddQty(1);
+    setAddPrice(0);
+    setAddSerials('');
+  };
+
+  const handleSave = () => {
+    if (!warehouseId || items.length === 0) return;
+    const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+    onSave({
+      id: uid(),
+      officeId: '',
+      type: 'receipt',
+      warehouseId,
+      productId: items[0].productId,
+      quantity: totalQty,
+      price: items[0].price,
+      amount: totalAmount,
+      employeeId,
+      date: new Date().toISOString().split('T')[0],
+      notes: '',
+      createdAt: new Date().toISOString(),
+      supplierId: supplierId || undefined,
+      invoiceNumber: invoiceNumber || undefined,
+      invoiceDate: invoiceDate || undefined,
+      items: items.map(i => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        price: i.price,
+        amount: i.amount,
+        serialNumbers: i._serials ? i._serials.split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      })),
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Склад */}
+      <div>
+        <label className={labelCls}>Склад *</label>
+        <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+      </div>
+
+      {/* Поставщик + Накладная */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelCls}>Поставщик</label>
+          <select value={supplierId} onChange={e => setSupplierId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+            <option value="">— Выберите —</option>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>№ Накладной</label>
+          <input value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className={inputCls} placeholder="№" />
+        </div>
+      </div>
+
+      <div>
+        <label className={labelCls}>От (дата накладной)</label>
+        <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className={inputCls} />
+      </div>
+
+      {/* Таблица товаров */}
+      <div>
+        <label className={labelCls}>Товары *</label>
+        {items.length > 0 && (
+          <div className="mb-3 space-y-2 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+            <div className="grid text-[10px] text-[#4b5568] font-semibold uppercase mb-1" style={{ gridTemplateColumns: '1fr 80px 100px 90px 28px' }}>
+              <span>Наименование</span><span className="text-center">Кол-во</span><span>Цена</span><span>Сумма</span><span />
+            </div>
+            {items.map((item, idx) => (
+              <ItemRow
+                key={idx}
+                item={item}
+                products={products}
+                showPrice={true}
+                onChange={updated => setItems(prev => prev.map((it, i) => i === idx ? updated : it))}
+                onRemove={() => setItems(prev => prev.filter((_, i) => i !== idx))}
+              />
+            ))}
+            <div className="flex justify-end pt-1 border-t border-[var(--border)]">
+              <span className="text-sm font-semibold text-[#10b981]">Итого: {totalAmount.toLocaleString('ru-RU')} ₽</span>
+            </div>
+          </div>
+        )}
+
+        {/* Добавить товар */}
+        {!addingProduct ? (
+          <ProductSearch products={products} onSelect={handleSelectProduct} placeholder="Поиск для добавления товара..." />
+        ) : (
+          <div className="bg-[var(--card)] border border-[#3b82f6]/40 rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-[var(--foreground)]">{addingProduct.name}</div>
+                <div className="text-xs text-[#4b5568]">{addingProduct.sku}</div>
+              </div>
+              <button onClick={() => setAddingProduct(null)} className="p-1 text-[#4b5568] hover:text-white rounded"><Icon name="X" size={14} /></button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] text-[#4b5568] mb-1 block">Количество</label>
+                <input type="number" min={1} value={addQty} onChange={e => setAddQty(Math.max(1, +e.target.value))} className={inputCls} />
+              </div>
+              <div>
+                <label className="text-[10px] text-[#4b5568] mb-1 block">Закупочная цена</label>
+                <input type="number" min={0} value={addPrice} onChange={e => setAddPrice(+e.target.value)} className={inputCls} />
+              </div>
+            </div>
+            {addingProduct.isSerial && (
+              <div>
+                <label className="text-[10px] text-[#4b5568] mb-1 block">Серийные номера (через запятую, необязательно)</label>
+                <input value={addSerials} onChange={e => setAddSerials(e.target.value)} className={inputCls} placeholder="SN001, SN002, ..." />
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-[#4b5568]">Сумма: <b className="text-[#10b981]">{(addQty * addPrice).toLocaleString('ru-RU')} ₽</b></span>
+              <button onClick={handleAddItem} className="px-3 py-1.5 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm transition-colors">
+                Добавить
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2 pt-2">
+        <button onClick={handleSave} disabled={!warehouseId || items.length === 0} className="flex-1 py-2.5 bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          Сохранить оприходование
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-sm transition-colors">
+          Отмена
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Форма списания ─── */
+interface WriteoffFormProps {
+  warehouses: WarehouseType[];
+  products: Product[];
+  warehouseStock: ReturnType<typeof useCRMStore>['warehouseStock'];
+  employeeId: string;
+  onSave: (data: Parameters<ReturnType<typeof useCRMStore>['addStockOperation']>[0]) => void;
+  onCancel: () => void;
+}
+function WriteoffForm({ warehouses, products, warehouseStock, employeeId, onSave, onCancel }: WriteoffFormProps) {
+  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id || '');
+  const [items, setItems] = useState<Array<StockOperationItem & { _product?: Product; _serials?: string }>>([]);
+  const [notes, setNotes] = useState('');
+  const [addingProduct, setAddingProduct] = useState<Product | null>(null);
+  const [addQty, setAddQty] = useState(1);
+  const [addSerials, setAddSerials] = useState('');
+
+  const availableProducts = products.filter(p =>
+    (warehouseStock.find(s => s.warehouseId === warehouseId && s.productId === p.id)?.quantity || 0) > 0
+  );
+
+  const handleAddItem = () => {
+    if (!addingProduct) return;
+    setItems(prev => [...prev, {
+      productId: addingProduct.id,
+      quantity: addQty,
+      price: 0,
+      amount: 0,
+      _product: addingProduct,
+      _serials: addSerials,
+    }]);
+    setAddingProduct(null);
+    setAddQty(1);
+    setAddSerials('');
+  };
+
+  const handleSave = () => {
+    if (!warehouseId || items.length === 0 || !notes.trim()) return;
+    const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+    onSave({
+      id: uid(),
+      officeId: '',
+      type: 'writeoff',
+      warehouseId,
+      productId: items[0].productId,
+      quantity: totalQty,
+      price: 0,
+      amount: 0,
+      employeeId,
+      date: new Date().toISOString().split('T')[0],
+      notes,
+      createdAt: new Date().toISOString(),
+      items: items.map(i => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        price: 0,
+        amount: 0,
+        serialNumbers: i._serials ? i._serials.split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      })),
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className={labelCls}>Склад *</label>
+        <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+      </div>
+
+      <div>
+        <label className={labelCls}>Товары *</label>
+        {items.length > 0 && (
+          <div className="mb-3 space-y-2 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+            <div className="grid text-[10px] text-[#4b5568] font-semibold uppercase mb-1" style={{ gridTemplateColumns: '1fr 80px 28px' }}>
+              <span>Наименование</span><span className="text-center">Кол-во</span><span />
+            </div>
+            {items.map((item, idx) => (
+              <ItemRow
+                key={idx}
+                item={item}
+                products={products}
+                showPrice={false}
+                onChange={updated => setItems(prev => prev.map((it, i) => i === idx ? updated : it))}
+                onRemove={() => setItems(prev => prev.filter((_, i) => i !== idx))}
+              />
+            ))}
+          </div>
+        )}
+
+        {!addingProduct ? (
+          <ProductSearch products={availableProducts} onSelect={p => setAddingProduct(p)} placeholder="Поиск товара на складе..." />
+        ) : (
+          <div className="bg-[var(--card)] border border-[#ef4444]/40 rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-[var(--foreground)]">{addingProduct.name}</div>
+                <div className="text-xs text-[#4b5568]">
+                  Остаток: {warehouseStock.find(s => s.warehouseId === warehouseId && s.productId === addingProduct.id)?.quantity || 0} {addingProduct.unit}
+                </div>
+              </div>
+              <button onClick={() => setAddingProduct(null)} className="p-1 text-[#4b5568] hover:text-white rounded"><Icon name="X" size={14} /></button>
+            </div>
+            <div>
+              <label className="text-[10px] text-[#4b5568] mb-1 block">Количество</label>
+              <input type="number" min={1} value={addQty} onChange={e => setAddQty(Math.max(1, +e.target.value))} className={inputCls} />
+            </div>
+            {addingProduct.isSerial && (
+              <div>
+                <label className="text-[10px] text-[#4b5568] mb-1 block">Серийные номера (через запятую)</label>
+                <input value={addSerials} onChange={e => setAddSerials(e.target.value)} className={inputCls} placeholder="SN001, SN002, ..." />
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button onClick={handleAddItem} className="px-3 py-1.5 bg-[#ef4444] hover:bg-[#dc2626] text-white rounded-lg text-sm transition-colors">
+                Добавить
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className={labelCls}>Комментарий *</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={inputCls} placeholder="Причина списания (обязательно)" />
+      </div>
+
+      <div className="flex gap-2 pt-2">
+        <button onClick={handleSave} disabled={!warehouseId || items.length === 0 || !notes.trim()} className="flex-1 py-2.5 bg-[#ef4444] hover:bg-[#dc2626] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          Списать
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-sm transition-colors">
+          Отмена
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Форма перемещения ─── */
+interface TransferFormProps {
+  warehouses: WarehouseType[];
+  products: Product[];
+  warehouseStock: ReturnType<typeof useCRMStore>['warehouseStock'];
+  employeeId: string;
+  onSave: (data: Parameters<ReturnType<typeof useCRMStore>['addStockOperation']>[0]) => void;
+  onCancel: () => void;
+}
+function TransferForm({ warehouses, products, warehouseStock, employeeId, onSave, onCancel }: TransferFormProps) {
+  const [fromId, setFromId] = useState(warehouses[0]?.id || '');
+  const [toId, setToId] = useState(warehouses[1]?.id || warehouses[0]?.id || '');
+  const [items, setItems] = useState<Array<StockOperationItem & { _product?: Product; _serials?: string }>>([]);
+  const [addingProduct, setAddingProduct] = useState<Product | null>(null);
+  const [addQty, setAddQty] = useState(1);
+  const [addSerials, setAddSerials] = useState('');
+
+  const availableProducts = products.filter(p =>
+    (warehouseStock.find(s => s.warehouseId === fromId && s.productId === p.id)?.quantity || 0) > 0
+  );
+
+  const handleAddItem = () => {
+    if (!addingProduct) return;
+    setItems(prev => [...prev, {
+      productId: addingProduct.id,
+      quantity: addQty,
+      price: 0,
+      amount: 0,
+      _product: addingProduct,
+      _serials: addSerials,
+    }]);
+    setAddingProduct(null);
+    setAddQty(1);
+    setAddSerials('');
+  };
+
+  const handleSave = () => {
+    if (!fromId || !toId || fromId === toId || items.length === 0) return;
+    const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+    onSave({
+      id: uid(),
+      officeId: '',
+      type: 'transfer',
+      warehouseId: fromId,
+      toWarehouseId: toId,
+      productId: items[0].productId,
+      quantity: totalQty,
+      price: 0,
+      amount: 0,
+      employeeId,
+      date: new Date().toISOString().split('T')[0],
+      notes: '',
+      createdAt: new Date().toISOString(),
+      items: items.map(i => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        price: 0,
+        amount: 0,
+        serialNumbers: i._serials ? i._serials.split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      })),
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelCls}>Откуда *</label>
+          <select value={fromId} onChange={e => setFromId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>Куда *</label>
+          <select value={toId} onChange={e => setToId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+            {warehouses.filter(w => w.id !== fromId).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className={labelCls}>Товары *</label>
+        {items.length > 0 && (
+          <div className="mb-3 space-y-2 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+            {items.map((item, idx) => (
+              <ItemRow
+                key={idx}
+                item={item}
+                products={products}
+                showPrice={false}
+                onChange={updated => setItems(prev => prev.map((it, i) => i === idx ? updated : it))}
+                onRemove={() => setItems(prev => prev.filter((_, i) => i !== idx))}
+              />
+            ))}
+          </div>
+        )}
+
+        {!addingProduct ? (
+          <ProductSearch products={availableProducts} onSelect={p => setAddingProduct(p)} placeholder="Поиск товара для перемещения..." />
+        ) : (
+          <div className="bg-[var(--card)] border border-[#3b82f6]/40 rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-[var(--foreground)]">{addingProduct.name}</div>
+                <div className="text-xs text-[#4b5568]">
+                  Остаток: {warehouseStock.find(s => s.warehouseId === fromId && s.productId === addingProduct.id)?.quantity || 0} {addingProduct.unit}
+                </div>
+              </div>
+              <button onClick={() => setAddingProduct(null)} className="p-1 text-[#4b5568] hover:text-white rounded"><Icon name="X" size={14} /></button>
+            </div>
+            <div>
+              <label className="text-[10px] text-[#4b5568] mb-1 block">Количество</label>
+              <input type="number" min={1} value={addQty} onChange={e => setAddQty(Math.max(1, +e.target.value))} className={inputCls} />
+            </div>
+            {addingProduct.isSerial && (
+              <div>
+                <label className="text-[10px] text-[#4b5568] mb-1 block">Серийные номера (через запятую)</label>
+                <input value={addSerials} onChange={e => setAddSerials(e.target.value)} className={inputCls} placeholder="SN001, SN002, ..." />
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button onClick={handleAddItem} className="px-3 py-1.5 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm transition-colors">
+                Добавить
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2 pt-2">
+        <button onClick={handleSave} disabled={!fromId || !toId || fromId === toId || items.length === 0} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          Переместить
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-sm transition-colors">
+          Отмена
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Форма товара (Номенклатура) ─── */
+interface ProductFormProps {
+  product?: Product;
+  categories: Category[];
+  onSave: (data: Omit<Product, 'id'>) => void;
+  onDelete?: () => void;
+  onCancel: () => void;
+}
+function ProductForm({ product, categories, onSave, onDelete, onCancel }: ProductFormProps) {
+  const [name, setName] = useState(product?.name || '');
+  const [sku, setSku] = useState(product?.sku || '');
+  const [categoryId, setCategoryId] = useState(product?.categoryId || categories[0]?.id || '');
+  const [unit, setUnit] = useState(product?.unit || 'шт');
+  const [price, setPrice] = useState(product?.price || 0);
+  const [description, setDescription] = useState(product?.description || '');
+  const [isSerial, setIsSerial] = useState(product?.isSerial || false);
+  const [photoUrl, setPhotoUrl] = useState(product?.photoUrl || '');
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setPhotoUrl(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Фото */}
+      <div className="flex items-center gap-4">
+        <div
+          onClick={() => fileRef.current?.click()}
+          className="w-20 h-20 rounded-xl border-2 border-dashed border-[#252d3d] hover:border-[#3b82f6] cursor-pointer flex items-center justify-center overflow-hidden flex-shrink-0 transition-colors"
+        >
+          {photoUrl ? (
+            <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <Icon name="Camera" size={24} className="text-[#4b5568]" />
+          )}
+        </div>
+        <div className="flex-1">
+          <div className="text-sm text-[var(--foreground)] font-medium mb-1">Фотография товара</div>
+          <div className="text-xs text-[#4b5568] mb-2">Нажмите для загрузки</div>
+          {photoUrl && (
+            <button onClick={() => setPhotoUrl('')} className="text-xs text-[#ef4444] hover:underline">Удалить фото</button>
+          )}
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+      </div>
+
+      <div>
+        <label className={labelCls}>Наименование *</label>
+        <input value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="Название товара" />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelCls}>Артикул</label>
+          <input value={sku} onChange={e => setSku(e.target.value)} className={inputCls} placeholder="SKU-001" />
+        </div>
+        <div>
+          <label className={labelCls}>Единица</label>
+          <select value={unit} onChange={e => setUnit(e.target.value)} className={inputCls + ' cursor-pointer'}>
+            {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelCls}>Категория</label>
+          <select value={categoryId} onChange={e => setCategoryId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>Цена (₽)</label>
+          <input type="number" min={0} value={price} onChange={e => setPrice(+e.target.value)} className={inputCls} />
+        </div>
+      </div>
+      <div>
+        <label className={labelCls}>Описание</label>
+        <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className={inputCls} />
+      </div>
+
+      {/* Серийный учёт */}
+      <label className="flex items-center gap-3 cursor-pointer select-none">
+        <div
+          onClick={() => setIsSerial(!isSerial)}
+          className={`w-10 h-5 rounded-full transition-colors flex items-center px-0.5 ${isSerial ? 'bg-[#3b82f6]' : 'bg-[#252d3d]'}`}
+        >
+          <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${isSerial ? 'translate-x-5' : 'translate-x-0'}`} />
+        </div>
+        <div>
+          <div className="text-sm text-[var(--foreground)] font-medium">Вести серийный учёт</div>
+          <div className="text-xs text-[#4b5568]">Каждая единица учитывается по серийному номеру</div>
+        </div>
+      </label>
+
+      <div className="flex gap-2 pt-2">
+        <button onClick={() => onSave({ name, sku, categoryId, unit, price, description, isSerial, photoUrl: photoUrl || undefined })} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          {product ? 'Сохранить' : 'Создать товар'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-sm transition-colors">
+          Отмена
+        </button>
+        {onDelete && (
+          <button onClick={onDelete} className="px-3 py-2.5 bg-[#ef4444]/10 hover:bg-[#ef4444]/20 text-[#ef4444] rounded-lg text-sm transition-colors">
+            <Icon name="Trash2" size={14} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Форма склада ─── */
+interface WarehouseFormProps {
+  warehouse?: WarehouseType;
+  onSave: (data: Omit<WarehouseType, 'id' | 'officeId'>) => void;
+  onDelete?: () => void;
+  onCancel: () => void;
+}
+function WarehouseForm({ warehouse, onSave, onDelete, onCancel }: WarehouseFormProps) {
+  const [name, setName] = useState(warehouse?.name || '');
+  const [address, setAddress] = useState(warehouse?.address || '');
+  const [description, setDescription] = useState(warehouse?.description || '');
+  return (
+    <div className="space-y-4">
+      <div><label className={labelCls}>Название *</label><input value={name} onChange={e => setName(e.target.value)} className={inputCls} /></div>
+      <div><label className={labelCls}>Адрес</label><input value={address} onChange={e => setAddress(e.target.value)} className={inputCls} /></div>
+      <div><label className={labelCls}>Описание</label><textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className={inputCls} /></div>
+      <div className="flex gap-2 pt-2">
+        <button onClick={() => onSave({ name, address, description })} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          {warehouse ? 'Сохранить' : 'Создать склад'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
+        {onDelete && <button onClick={onDelete} className="px-3 py-2.5 bg-[#ef4444]/10 text-[#ef4444] rounded-lg text-sm transition-colors"><Icon name="Trash2" size={14} /></button>}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Форма категории ─── */
+interface CategoryFormProps {
+  category?: Category;
+  categories: Category[];
+  onSave: (data: Omit<Category, 'id'>) => void;
+  onDelete?: () => void;
+  onCancel: () => void;
+}
+function CategoryForm({ category, categories, onSave, onDelete, onCancel }: CategoryFormProps) {
+  const [name, setName] = useState(category?.name || '');
+  const [parentId, setParentId] = useState(category?.parentId || '');
+  return (
+    <div className="space-y-4">
+      <div><label className={labelCls}>Название *</label><input value={name} onChange={e => setName(e.target.value)} className={inputCls} /></div>
+      <div>
+        <label className={labelCls}>Родительская категория</label>
+        <select value={parentId} onChange={e => setParentId(e.target.value)} className={inputCls + ' cursor-pointer'}>
+          <option value="">— Корневая —</option>
+          {categories.filter(c => c.id !== category?.id).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      <div className="flex gap-2 pt-2">
+        <button onClick={() => onSave({ name, parentId: parentId || undefined })} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          {category ? 'Сохранить' : 'Создать категорию'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
+        {onDelete && <button onClick={onDelete} className="px-3 py-2.5 bg-[#ef4444]/10 text-[#ef4444] rounded-lg text-sm transition-colors"><Icon name="Trash2" size={14} /></button>}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Форма поставщика ─── */
+interface SupplierFormProps {
+  supplier?: Supplier;
+  onSave: (data: Omit<Supplier, 'id'>) => void;
+  onDelete?: () => void;
+  onCancel: () => void;
+}
+function SupplierForm({ supplier, onSave, onDelete, onCancel }: SupplierFormProps) {
+  const [name, setName] = useState(supplier?.name || '');
+  const [inn, setInn] = useState(supplier?.inn || '');
+  const [phone, setPhone] = useState(supplier?.phone || '');
+  const [email, setEmail] = useState(supplier?.email || '');
+  const [address, setAddress] = useState(supplier?.address || '');
+  const [contactPerson, setContactPerson] = useState(supplier?.contactPerson || '');
+  const [notes, setNotes] = useState(supplier?.notes || '');
+  return (
+    <div className="space-y-4">
+      <div><label className={labelCls}>Название *</label><input value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="ООО Поставщик" /></div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className={labelCls}>ИНН</label><input value={inn} onChange={e => setInn(e.target.value)} className={inputCls} /></div>
+        <div><label className={labelCls}>Телефон</label><input value={phone} onChange={e => setPhone(e.target.value)} className={inputCls} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className={labelCls}>Email</label><input value={email} onChange={e => setEmail(e.target.value)} className={inputCls} /></div>
+        <div><label className={labelCls}>Контактное лицо</label><input value={contactPerson} onChange={e => setContactPerson(e.target.value)} className={inputCls} /></div>
+      </div>
+      <div><label className={labelCls}>Адрес</label><input value={address} onChange={e => setAddress(e.target.value)} className={inputCls} /></div>
+      <div><label className={labelCls}>Примечания</label><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls} /></div>
+      <div className="flex gap-2 pt-2">
+        <button onClick={() => onSave({ name, inn, phone, email, address, contactPerson, notes })} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+          {supplier ? 'Сохранить' : 'Создать поставщика'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
+        {onDelete && <button onClick={onDelete} className="px-3 py-2.5 bg-[#ef4444]/10 text-[#ef4444] rounded-lg text-sm transition-colors"><Icon name="Trash2" size={14} /></button>}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════
+   ГЛАВНЫЙ КОМПОНЕНТ
+════════════════════════════════════════════ */
 export default function WarehouseModule({ onOpenPanel, onClosePanel }: Props) {
   const store = useCRMStore();
-  const { currentOfficeId, warehouses, categories, products, stockOperations, warehouseStock, employees } = store;
+  const { currentOfficeId, warehouses, categories, products, stockOperations, warehouseStock, employees, suppliers } = store;
   const [tab, setTab] = useState<Tab>('residue');
   const [search, setSearch] = useState('');
-  const [whFilter, setWhFilter] = useState('all');
+  const [whFilter, setWhFilter] = useState('');
   const [catFilter, setCatFilter] = useState('all');
   const [opTypeFilter, setOpTypeFilter] = useState<'all' | StockOperationType>('all');
   const [dateFrom, setDateFrom] = useState('');
@@ -48,21 +829,15 @@ export default function WarehouseModule({ onOpenPanel, onClosePanel }: Props) {
 
   const offWarehouses = warehouses.filter(w => w.officeId === currentOfficeId);
 
-  // Вычисляем остатки
   const getStock = (warehouseId: string, productId: string) =>
     warehouseStock.find(s => s.warehouseId === warehouseId && s.productId === productId)?.quantity ?? 0;
 
-  const getTotalStock = (productId: string) =>
-    offWarehouses.reduce((sum, w) => sum + getStock(w.id, productId), 0);
+  const getSerials = (warehouseId: string, productId: string) =>
+    warehouseStock.find(s => s.warehouseId === warehouseId && s.productId === productId)?.serialNumbers || [];
 
-  // Все операции офиса
   const offOps = stockOperations.filter(o => o.officeId === currentOfficeId);
 
-  // Фильтрованные операции по табу + фильтрам
   const filteredOps = useMemo(() => {
-    const typeForTab: Partial<Record<Tab, StockOperationType>> = {
-      income: 'receipt', outcome: 'writeoff', move: 'transfer',
-    };
     let ops = offOps;
     if (tab === 'income') ops = ops.filter(o => o.type === 'receipt');
     else if (tab === 'outcome') ops = ops.filter(o => o.type === 'writeoff');
@@ -70,7 +845,7 @@ export default function WarehouseModule({ onOpenPanel, onClosePanel }: Props) {
     else if (tab === 'operations') {
       if (opTypeFilter !== 'all') ops = ops.filter(o => o.type === opTypeFilter);
     }
-    if (whFilter !== 'all') ops = ops.filter(o => o.warehouseId === whFilter || o.toWarehouseId === whFilter);
+    if (whFilter) ops = ops.filter(o => o.warehouseId === whFilter || o.toWarehouseId === whFilter);
     if (dateFrom) ops = ops.filter(o => o.date >= dateFrom);
     if (dateTo) ops = ops.filter(o => o.date <= dateTo);
     const q = search.toLowerCase();
@@ -81,38 +856,74 @@ export default function WarehouseModule({ onOpenPanel, onClosePanel }: Props) {
     return [...ops].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [offOps, tab, whFilter, opTypeFilter, dateFrom, dateTo, search, products]);
 
-  // Статистика
-  const totalValue = offWarehouses.reduce((sum, wh) =>
-    sum + warehouseStock
-      .filter(s => s.warehouseId === wh.id && s.quantity > 0)
-      .reduce((s2, s) => {
-        const p = products.find(p => p.id === s.productId);
-        return s2 + (p ? s.quantity * p.price : 0);
-      }, 0), 0);
+  // Остатки: все товары с ненулевым остатком, фильтрованные по выбранному складу
+  const residueRows = useMemo(() => {
+    const selectedWh = whFilter ? offWarehouses.filter(w => w.id === whFilter) : offWarehouses;
+    const q = search.toLowerCase();
+    const rows: Array<{ product: Product; warehouseId: string; warehouseName: string; qty: number; serialNumbers: string[] }> = [];
+    for (const wh of selectedWh) {
+      for (const p of products) {
+        if (catFilter !== 'all' && p.categoryId !== catFilter) continue;
+        if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q)) continue;
+        const qty = getStock(wh.id, p.id);
+        const serials = getSerials(wh.id, p.id);
+        if (qty > 0 || serials.length > 0) {
+          if (p.isSerial && serials.length > 0) {
+            for (const sn of serials) {
+              rows.push({ product: p, warehouseId: wh.id, warehouseName: wh.name, qty: 1, serialNumbers: [sn] });
+            }
+          } else {
+            rows.push({ product: p, warehouseId: wh.id, warehouseName: wh.name, qty, serialNumbers: [] });
+          }
+        }
+      }
+    }
+    return rows;
+  }, [offWarehouses, products, warehouseStock, whFilter, catFilter, search]);
 
-  const totalItems = new Set(
-    warehouseStock.filter(s => offWarehouses.find(w => w.id === s.warehouseId) && s.quantity > 0).map(s => s.productId)
-  ).size;
+  const activeEmployee = employees.find(e => e.status === 'active');
 
-  const monthOps = offOps.filter(o => {
-    const d = new Date(o.date);
-    const now = new Date();
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
-  const monthReceipt = monthOps.filter(o => o.type === 'receipt').reduce((s, o) => s + o.amount, 0);
-  const monthWriteoff = monthOps.filter(o => o.type === 'writeoff').reduce((s, o) => s + o.amount, 0);
-
-  const openOpForm = (type: StockOperationType) => {
-    const cfg = OP_CONFIG[type];
-    onOpenPanel(cfg.label, (
-      <OperationForm
-        type={type}
+  const openReceiptForm = () => {
+    onOpenPanel('Новое оприходование', (
+      <ReceiptForm
         warehouses={offWarehouses}
         products={products}
-        categories={categories}
-        employees={employees.filter(e => e.status === 'active')}
+        suppliers={suppliers || []}
+        employeeId={activeEmployee?.id || ''}
         onSave={(op) => {
-          store.addStockOperation({ id: uid(), officeId: currentOfficeId, createdAt: new Date().toISOString(), ...op });
+          store.addStockOperation({ ...op, officeId: currentOfficeId });
+          onClosePanel();
+        }}
+        onCancel={onClosePanel}
+      />
+    ));
+  };
+
+  const openWriteoffForm = () => {
+    onOpenPanel('Новое списание', (
+      <WriteoffForm
+        warehouses={offWarehouses}
+        products={products}
+        warehouseStock={warehouseStock}
+        employeeId={activeEmployee?.id || ''}
+        onSave={(op) => {
+          store.addStockOperation({ ...op, officeId: currentOfficeId });
+          onClosePanel();
+        }}
+        onCancel={onClosePanel}
+      />
+    ));
+  };
+
+  const openTransferForm = () => {
+    onOpenPanel('Новое перемещение', (
+      <TransferForm
+        warehouses={offWarehouses}
+        products={products}
+        warehouseStock={warehouseStock}
+        employeeId={activeEmployee?.id || ''}
+        onSave={(op) => {
+          store.addStockOperation({ ...op, officeId: currentOfficeId });
           onClosePanel();
         }}
         onCancel={onClosePanel}
@@ -167,6 +978,41 @@ export default function WarehouseModule({ onOpenPanel, onClosePanel }: Props) {
     ));
   };
 
+  const openSupplierForm = (sup?: Supplier) => {
+    onOpenPanel(sup ? 'Редактировать поставщика' : 'Новый поставщик', (
+      <SupplierForm
+        supplier={sup}
+        onSave={(data) => {
+          if (sup) store.updateSupplier(sup.id, data);
+          else store.addSupplier({ id: uid(), ...data });
+          onClosePanel();
+        }}
+        onDelete={sup ? () => { store.deleteSupplier(sup.id); onClosePanel(); } : undefined}
+        onCancel={onClosePanel}
+      />
+    ));
+  };
+
+  /* ── СТАТИСТИКА ── */
+  const totalValue = offWarehouses.reduce((sum, wh) =>
+    sum + warehouseStock
+      .filter(s => s.warehouseId === wh.id && s.quantity > 0)
+      .reduce((s2, s) => {
+        const p = products.find(p => p.id === s.productId);
+        return s2 + (p ? s.quantity * p.price : 0);
+      }, 0), 0);
+
+  const totalItems = new Set(
+    warehouseStock.filter(s => offWarehouses.find(w => w.id === s.warehouseId) && s.quantity > 0).map(s => s.productId)
+  ).size;
+
+  const monthOps = offOps.filter(o => {
+    const d = new Date(o.date);
+    const now = new Date();
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+  const monthReceipt = monthOps.filter(o => o.type === 'receipt').reduce((s, o) => s + o.amount, 0);
+
   return (
     <div className="space-y-4">
       {/* Статистика */}
@@ -174,971 +1020,329 @@ export default function WarehouseModule({ onOpenPanel, onClosePanel }: Props) {
         {[
           { label: 'Складов', value: offWarehouses.length, icon: 'Warehouse', color: 'text-[#3b82f6]', bg: 'bg-[#3b82f6]/10' },
           { label: 'Позиций на складе', value: totalItems, icon: 'Package', color: 'text-[#10b981]', bg: 'bg-[#10b981]/10' },
-          { label: 'Приход за месяц', value: `${monthReceipt.toLocaleString('ru-RU')} ₽`, icon: 'ArrowDownToLine', color: 'text-[#10b981]', bg: 'bg-[#10b981]/10' },
+          { label: 'Оприходовано за месяц', value: `${monthReceipt.toLocaleString('ru-RU')} ₽`, icon: 'ArrowDownToLine', color: 'text-[#10b981]', bg: 'bg-[#10b981]/10' },
           { label: 'Стоимость запасов', value: `${totalValue.toLocaleString('ru-RU')} ₽`, icon: 'CircleDollarSign', color: 'text-[#f59e0b]', bg: 'bg-[#f59e0b]/10' },
         ].map(s => (
-          <div key={s.label} className="bg-[#161b27] border border-[#252d3d] rounded-xl p-4">
+          <div key={s.label} className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
             <div className="flex items-center gap-3">
               <div className={`w-9 h-9 rounded-lg ${s.bg} flex items-center justify-center flex-shrink-0`}>
                 <Icon name={s.icon} size={16} className={s.color} />
               </div>
-              <div>
-                <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
-                <div className="text-xs text-[#4b5568]">{s.label}</div>
+              <div className="min-w-0">
+                <div className="text-[11px] text-[#4b5568] truncate">{s.label}</div>
+                <div className="text-base font-bold text-[var(--foreground)]">{s.value}</div>
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-[#0f1117] rounded-xl p-1 overflow-x-auto">
+      {/* Вкладки */}
+      <div className="flex gap-1 bg-[var(--card)] border border-[var(--border)] rounded-xl p-1 overflow-x-auto">
         {TABS.map(t => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap flex-shrink-0 ${
-              tab === t.id ? 'bg-[#3b82f6] text-white shadow' : 'text-[#8892a4] hover:text-white hover:bg-[#1e2637]'
-            }`}
+            onClick={() => { setTab(t.id); setSearch(''); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0
+              ${tab === t.id ? 'bg-[#3b82f6] text-white' : 'text-[#8892a4] hover:text-[var(--foreground)]'}`}
           >
-            <Icon name={t.icon} size={13} />
-            {t.label}
+            <Icon name={t.icon} size={13} />{t.label}
           </button>
         ))}
       </div>
 
-      {/* ─── ОСТАТКИ ─── */}
+      {/* ── ОСТАТКИ ── */}
       {tab === 'residue' && (
-        <ResidueTab
-          warehouses={offWarehouses}
-          products={products}
-          categories={categories}
-          warehouseStock={warehouseStock}
-          onReceipt={() => openOpForm('receipt')}
-          onWriteoff={() => openOpForm('writeoff')}
-          onTransfer={() => openOpForm('transfer')}
-          onAddWarehouse={() => openWarehouseForm()}
-          onEditWarehouse={openWarehouseForm}
-        />
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <input value={search} onChange={e => setSearch(e.target.value)} className={inputCls + ' max-w-xs'} placeholder="Поиск товара..." />
+            <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className={inputCls + ' max-w-[180px] cursor-pointer'}>
+              <option value="">Все склады</option>
+              {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            <select value={catFilter} onChange={e => setCatFilter(e.target.value)} className={inputCls + ' max-w-[160px] cursor-pointer'}>
+              <option value="all">Все категории</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <button onClick={() => openWarehouseForm()} className="flex items-center gap-1.5 px-3 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors ml-auto">
+              <Icon name="Plus" size={13} />Новый склад
+            </button>
+          </div>
+
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="grid text-[11px] text-[#4b5568] font-semibold uppercase px-4 py-2 border-b border-[var(--border)] bg-[var(--card)]" style={{ gridTemplateColumns: '2fr 1fr 1fr 80px 80px' }}>
+              <span>Наименование</span><span>Артикул</span><span>Склад</span><span className="text-right">Кол-во</span><span className="text-right">Ед.</span>
+            </div>
+            {residueRows.length === 0 ? (
+              <div className="py-12 text-center text-sm text-[#4b5568]">Нет товаров на складе</div>
+            ) : (
+              residueRows.map((row, idx) => {
+                const cat = categories.find(c => c.id === row.product.categoryId);
+                const lowStock = row.qty <= 5;
+                const midStock = row.qty <= 20 && row.qty > 5;
+                return (
+                  <div
+                    key={idx}
+                    className="grid items-center px-4 py-2.5 border-b border-[var(--border)] last:border-0 hover:bg-[#1e2637]/30 transition-colors"
+                    style={{ gridTemplateColumns: '2fr 1fr 1fr 80px 80px' }}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        {row.product.photoUrl && (
+                          <img src={row.product.photoUrl} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" />
+                        )}
+                        <div>
+                          <div className="text-sm text-[var(--foreground)] font-medium">{row.product.name}</div>
+                          {cat && <div className="text-[10px] text-[#4b5568]">{cat.name}</div>}
+                          {row.product.isSerial && row.serialNumbers[0] && (
+                            <div className="text-[10px] text-[#3b82f6] font-mono">SN: {row.serialNumbers[0]}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-[#8892a4] font-mono">{row.product.sku}</div>
+                    <div className="text-xs text-[#8892a4]">{row.warehouseName}</div>
+                    <div className={`text-sm font-bold text-right ${lowStock ? 'text-[#ef4444]' : midStock ? 'text-[#f59e0b]' : 'text-[var(--foreground)]'}`}>
+                      {row.qty}
+                    </div>
+                    <div className="text-xs text-[#4b5568] text-right">{row.product.unit}</div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       )}
 
-      {/* ─── ПРИХОД / СПИСАНИЕ / ПЕРЕМЕЩЕНИЕ ─── */}
-      {(tab === 'income' || tab === 'outcome' || tab === 'move') && (
-        <OpListTab
-          tab={tab}
-          ops={filteredOps}
-          products={products}
-          warehouses={warehouses}
-          employees={employees}
-          whFilter={whFilter}
-          setWhFilter={setWhFilter}
-          search={search}
-          setSearch={setSearch}
-          dateFrom={dateFrom}
-          setDateFrom={setDateFrom}
-          dateTo={dateTo}
-          setDateTo={setDateTo}
-          offWarehouses={offWarehouses}
-          onAdd={() => openOpForm(tab === 'income' ? 'receipt' : tab === 'outcome' ? 'writeoff' : 'transfer')}
-        />
+      {/* ── ОПРИХОДОВАНИЯ ── */}
+      {tab === 'income' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <input value={search} onChange={e => setSearch(e.target.value)} className={inputCls + ' max-w-xs'} placeholder="Поиск..." />
+            <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className={inputCls + ' max-w-[180px] cursor-pointer'}>
+              <option value="">Все склады</option>
+              {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={inputCls + ' max-w-[150px]'} />
+            <span className="text-[#4b5568] text-sm">—</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={inputCls + ' max-w-[150px]'} />
+            <button onClick={openReceiptForm} className="flex items-center gap-1.5 px-3 py-2 bg-[#10b981] hover:bg-[#059669] text-white rounded-lg text-xs font-medium transition-colors ml-auto">
+              <Icon name="Plus" size={13} />Новое оприходование
+            </button>
+          </div>
+          <OperationsTable ops={filteredOps} products={products} warehouses={offWarehouses} suppliers={suppliers || []} opConfig={OP_CONFIG} />
+        </div>
       )}
 
-      {/* ─── НОМЕНКЛАТУРА ─── */}
+      {/* ── СПИСАНИЕ ── */}
+      {tab === 'outcome' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <input value={search} onChange={e => setSearch(e.target.value)} className={inputCls + ' max-w-xs'} placeholder="Поиск..." />
+            <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className={inputCls + ' max-w-[180px] cursor-pointer'}>
+              <option value="">Все склады</option>
+              {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            <button onClick={openWriteoffForm} className="flex items-center gap-1.5 px-3 py-2 bg-[#ef4444] hover:bg-[#dc2626] text-white rounded-lg text-xs font-medium transition-colors ml-auto">
+              <Icon name="Plus" size={13} />Новое списание
+            </button>
+          </div>
+          <OperationsTable ops={filteredOps} products={products} warehouses={offWarehouses} suppliers={suppliers || []} opConfig={OP_CONFIG} />
+        </div>
+      )}
+
+      {/* ── ПЕРЕМЕЩЕНИЕ ── */}
+      {tab === 'move' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <input value={search} onChange={e => setSearch(e.target.value)} className={inputCls + ' max-w-xs'} placeholder="Поиск..." />
+            <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className={inputCls + ' max-w-[180px] cursor-pointer'}>
+              <option value="">Все склады</option>
+              {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            <button onClick={openTransferForm} className="flex items-center gap-1.5 px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-xs font-medium transition-colors ml-auto">
+              <Icon name="Plus" size={13} />Новое перемещение
+            </button>
+          </div>
+          <OperationsTable ops={filteredOps} products={products} warehouses={offWarehouses} suppliers={suppliers || []} opConfig={OP_CONFIG} />
+        </div>
+      )}
+
+      {/* ── НОМЕНКЛАТУРА ── */}
       {tab === 'products' && (
-        <ProductsTab
-          products={products}
-          categories={categories}
-          warehouseStock={warehouseStock}
-          offWarehouses={offWarehouses}
-          search={search}
-          setSearch={setSearch}
-          catFilter={catFilter}
-          setCatFilter={setCatFilter}
-          onAdd={() => openProductForm()}
-          onEdit={openProductForm}
-          onAddCategory={() => openCategoryForm()}
-          onEditCategory={openCategoryForm}
-        />
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <input value={search} onChange={e => setSearch(e.target.value)} className={inputCls + ' max-w-xs'} placeholder="Поиск товара..." />
+            <select value={catFilter} onChange={e => setCatFilter(e.target.value)} className={inputCls + ' max-w-[160px] cursor-pointer'}>
+              <option value="all">Все категории</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <div className="flex gap-2 ml-auto">
+              <button onClick={() => openCategoryForm()} className="flex items-center gap-1.5 px-3 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors">
+                <Icon name="FolderPlus" size={13} />Категория
+              </button>
+              <button onClick={() => openProductForm()} className="flex items-center gap-1.5 px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-xs font-medium transition-colors">
+                <Icon name="Plus" size={13} />Новый товар
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="grid text-[11px] text-[#4b5568] font-semibold uppercase px-4 py-2 border-b border-[var(--border)]" style={{ gridTemplateColumns: '40px 2fr 1fr 1fr 80px 70px 60px 32px' }}>
+              <span />
+              <span>Наименование</span><span>Артикул</span><span>Категория</span>
+              <span className="text-right">Цена</span><span className="text-center">Ед.</span>
+              <span className="text-center">Серийный</span><span />
+            </div>
+            {products.filter(p => {
+              if (catFilter !== 'all' && p.categoryId !== catFilter) return false;
+              if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.sku.toLowerCase().includes(search.toLowerCase())) return false;
+              return true;
+            }).map(p => {
+              const cat = categories.find(c => c.id === p.categoryId);
+              const totalQty = offWarehouses.reduce((s, w) => s + getStock(w.id, p.id), 0);
+              return (
+                <div
+                  key={p.id}
+                  className="grid items-center px-4 py-2.5 border-b border-[var(--border)] last:border-0 hover:bg-[#1e2637]/30 cursor-pointer transition-colors"
+                  style={{ gridTemplateColumns: '40px 2fr 1fr 1fr 80px 70px 60px 32px' }}
+                  onClick={() => openProductForm(p)}
+                >
+                  <div className="w-8 h-8 rounded overflow-hidden bg-[#252d3d] flex items-center justify-center flex-shrink-0">
+                    {p.photoUrl ? <img src={p.photoUrl} alt="" className="w-full h-full object-cover" /> : <Icon name="Package" size={14} className="text-[#4b5568]" />}
+                  </div>
+                  <div>
+                    <div className="text-sm text-[var(--foreground)] font-medium">{p.name}</div>
+                    <div className="text-[10px] text-[#4b5568]">Остаток: {totalQty} {p.unit}</div>
+                  </div>
+                  <div className="text-xs text-[#8892a4] font-mono">{p.sku}</div>
+                  <div className="text-xs text-[#8892a4]">{cat?.name || '—'}</div>
+                  <div className="text-sm text-right text-[var(--foreground)]">{p.price.toLocaleString('ru-RU')} ₽</div>
+                  <div className="text-xs text-center text-[#8892a4]">{p.unit}</div>
+                  <div className="text-center">
+                    {p.isSerial ? <span className="text-[10px] text-[#3b82f6] bg-[#3b82f6]/10 px-1.5 py-0.5 rounded">Да</span> : <span className="text-[10px] text-[#4b5568]">—</span>}
+                  </div>
+                  <Icon name="ChevronRight" size={14} className="text-[#4b5568]" />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Категории */}
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-[var(--foreground)]">Категории</h4>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {categories.map(c => (
+                <button key={c.id} onClick={() => openCategoryForm(c)} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-xs transition-colors">
+                  <Icon name="Folder" size={12} />{c.name}
+                  {c.parentId && <span className="text-[#252d3d]">↳</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Поставщики */}
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-[var(--foreground)]">Поставщики</h4>
+              <button onClick={() => openSupplierForm()} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-xs transition-colors">
+                <Icon name="Plus" size={12} />Добавить
+              </button>
+            </div>
+            {(!suppliers || suppliers.length === 0) ? (
+              <div className="text-sm text-[#4b5568] text-center py-4">Поставщики не добавлены</div>
+            ) : (
+              <div className="space-y-2">
+                {suppliers.map(s => (
+                  <div key={s.id} onClick={() => openSupplierForm(s)} className="flex items-center justify-between p-3 bg-[#1e2637] rounded-xl hover:bg-[#252d3d] cursor-pointer transition-colors">
+                    <div>
+                      <div className="text-sm font-medium text-[var(--foreground)]">{s.name}</div>
+                      <div className="text-xs text-[#4b5568]">{[s.inn && `ИНН: ${s.inn}`, s.phone].filter(Boolean).join(' · ')}</div>
+                    </div>
+                    <Icon name="ChevronRight" size={14} className="text-[#4b5568]" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
-      {/* ─── ИСТОРИЯ ─── */}
+      {/* ── ИСТОРИЯ ── */}
       {tab === 'operations' && (
-        <HistoryTab
-          ops={filteredOps}
-          products={products}
-          warehouses={warehouses}
-          employees={employees}
-          search={search}
-          setSearch={setSearch}
-          whFilter={whFilter}
-          setWhFilter={setWhFilter}
-          opTypeFilter={opTypeFilter}
-          setOpTypeFilter={setOpTypeFilter}
-          dateFrom={dateFrom}
-          setDateFrom={setDateFrom}
-          dateTo={dateTo}
-          setDateTo={setDateTo}
-          offWarehouses={offWarehouses}
-        />
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <input value={search} onChange={e => setSearch(e.target.value)} className={inputCls + ' max-w-xs'} placeholder="Поиск..." />
+            <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className={inputCls + ' max-w-[180px] cursor-pointer'}>
+              <option value="">Все склады</option>
+              {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            <select value={opTypeFilter} onChange={e => setOpTypeFilter(e.target.value as 'all' | StockOperationType)} className={inputCls + ' max-w-[160px] cursor-pointer'}>
+              <option value="all">Все типы</option>
+              {Object.entries(OP_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={inputCls + ' max-w-[150px]'} />
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={inputCls + ' max-w-[150px]'} />
+          </div>
+          <OperationsTable ops={filteredOps} products={products} warehouses={offWarehouses} suppliers={suppliers || []} opConfig={OP_CONFIG} />
+        </div>
       )}
     </div>
   );
 }
 
-/* ─────────── ОСТАТКИ ─────────── */
-function ResidueTab({ warehouses, products, categories, warehouseStock, onReceipt, onWriteoff, onTransfer, onAddWarehouse, onEditWarehouse }: {
-  warehouses: WarehouseType[];
+/* ─── Таблица операций (общая) ─── */
+interface OpsTableProps {
+  ops: ReturnType<typeof useCRMStore>['stockOperations'];
   products: Product[];
-  categories: Category[];
-  warehouseStock: ReturnType<typeof useCRMStore>['warehouseStock'];
-  onReceipt: () => void; onWriteoff: () => void; onTransfer: () => void;
-  onAddWarehouse: () => void; onEditWarehouse: (wh: WarehouseType) => void;
-}) {
-  const [search, setSearch] = useState('');
-  const [expandedWh, setExpandedWh] = useState<string[]>(warehouses.map(w => w.id));
-
-  const getCatName = (id: string) => {
-    const cat = categories.find(c => c.id === id);
-    if (!cat) return '—';
-    if (cat.parentId) {
-      const parent = categories.find(c => c.id === cat.parentId);
-      return parent ? `${parent.name} / ${cat.name}` : cat.name;
-    }
-    return cat.name;
-  };
-
+  warehouses: WarehouseType[];
+  suppliers: Supplier[];
+  opConfig: typeof OP_CONFIG;
+}
+function OperationsTable({ ops, products, warehouses, suppliers, opConfig }: OpsTableProps) {
+  if (ops.length === 0) {
+    return <div className="py-12 text-center text-sm text-[#4b5568]">Операций не найдено</div>;
+  }
   return (
-    <div className="space-y-4">
-      {/* Кнопки операций */}
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={onReceipt} className="flex items-center gap-2 px-4 py-2 bg-[#10b981] hover:bg-[#059669] text-white rounded-lg text-sm font-medium transition-colors">
-            <Icon name="ArrowDownToLine" size={14} />Приход
-          </button>
-          <button onClick={onWriteoff} className="flex items-center gap-2 px-4 py-2 bg-[#ef4444] hover:bg-[#dc2626] text-white rounded-lg text-sm font-medium transition-colors">
-            <Icon name="ArrowUpFromLine" size={14} />Списание
-          </button>
-          <button onClick={onTransfer} className="flex items-center gap-2 px-4 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm font-medium transition-colors">
-            <Icon name="ArrowLeftRight" size={14} />Перемещение
-          </button>
-        </div>
-        <div className="flex gap-2">
-          <div className="relative">
-            <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4b5568]" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по товару..." className="bg-[#1e2637] border border-[#252d3d] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] w-52" />
-          </div>
-          <button onClick={onAddWarehouse} className="flex items-center gap-1.5 px-3 py-2 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] hover:text-white rounded-lg text-sm transition-colors">
-            <Icon name="Plus" size={14} />Склад
-          </button>
-        </div>
-      </div>
-
-      {warehouses.length === 0 && (
-        <div className="text-center py-16 text-[#4b5568]">
-          <Icon name="Warehouse" size={40} className="mx-auto mb-3 opacity-30" />
-          <div className="text-sm">Складов нет. Добавьте первый.</div>
-          <button onClick={onAddWarehouse} className="mt-3 px-4 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm">Добавить склад</button>
-        </div>
-      )}
-
-      {warehouses.map(wh => {
-        const stocks = warehouseStock.filter(s => s.warehouseId === wh.id && s.quantity > 0);
-        const filteredStocks = stocks.filter(s => {
-          if (!search) return true;
-          const p = products.find(p => p.id === s.productId);
-          return p?.name.toLowerCase().includes(search.toLowerCase()) || p?.sku.toLowerCase().includes(search.toLowerCase());
-        });
-        const totalVal = stocks.reduce((sum, s) => {
-          const p = products.find(p => p.id === s.productId);
-          return sum + (p ? s.quantity * p.price : 0);
-        }, 0);
-        const isExpanded = expandedWh.includes(wh.id);
+    <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+      {ops.map(op => {
+        const cfg = opConfig[op.type];
+        const wh = warehouses.find(w => w.id === op.warehouseId);
+        const toWh = op.toWarehouseId ? warehouses.find(w => w.id === op.toWarehouseId) : null;
+        const sup = op.supplierId ? suppliers.find(s => s.id === op.supplierId) : null;
+        const itemProducts = op.items?.map(i => products.find(p => p.id === i.productId)) || [products.find(p => p.id === op.productId)];
+        const uniqueNames = Array.from(new Set(itemProducts.map(p => p?.name).filter(Boolean)));
 
         return (
-          <div key={wh.id} className="bg-[#161b27] border border-[#252d3d] rounded-xl overflow-hidden">
-            {/* Заголовок склада */}
-            <div
-              className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-[#1e2637] transition-colors"
-              onClick={() => setExpandedWh(prev => prev.includes(wh.id) ? prev.filter(id => id !== wh.id) : [...prev, wh.id])}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[#3b82f6]/10 flex items-center justify-center">
-                  <Icon name="Warehouse" size={16} className="text-[#3b82f6]" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-white">{wh.name}</div>
-                  <div className="text-xs text-[#4b5568]">{wh.address}</div>
-                </div>
+          <div key={op.id} className={`flex items-start gap-3 px-4 py-3 border-b border-[var(--border)] last:border-0 hover:bg-[#1e2637]/20 transition-colors`}>
+            <div className={`mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${cfg.bg} border`}>
+              <Icon name={cfg.icon} size={12} className={cfg.color} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
+                <span className="text-xs text-[#4b5568]">{op.date}</span>
+                {op.invoiceNumber && <span className="text-xs text-[#4b5568]">№ {op.invoiceNumber}</span>}
+                {sup && <span className="text-xs text-[#8892a4]">· {sup.name}</span>}
               </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right hidden sm:block">
-                  <div className="text-sm font-bold text-[#10b981]">{totalVal.toLocaleString('ru-RU')} ₽</div>
-                  <div className="text-xs text-[#4b5568]">{stocks.length} позиций</div>
-                </div>
-                <button onClick={e => { e.stopPropagation(); onEditWarehouse(wh); }} className="p-1.5 hover:bg-[#252d3d] rounded text-[#4b5568] hover:text-white transition-colors">
-                  <Icon name="Pencil" size={13} />
-                </button>
-                <Icon name={isExpanded ? 'ChevronUp' : 'ChevronDown'} size={16} className="text-[#4b5568]" />
+              <div className="text-sm text-[var(--foreground)] mt-0.5 truncate">
+                {uniqueNames.join(', ')}
+                {op.items && op.items.length > 1 && <span className="text-xs text-[#4b5568] ml-1">и ещё {op.items.length - 1} поз.</span>}
+              </div>
+              <div className="text-xs text-[#4b5568] mt-0.5">
+                {wh?.name}{toWh ? ` → ${toWh.name}` : ''}
+                {op.notes && <span className="ml-2 italic">· {op.notes}</span>}
               </div>
             </div>
-
-            {/* Таблица остатков */}
-            {isExpanded && (
-              filteredStocks.length === 0 ? (
-                <div className="px-5 py-6 text-center text-xs text-[#4b5568] border-t border-[#252d3d]">
-                  {search ? 'Товары не найдены' : 'Склад пуст'}
-                </div>
-              ) : (
-                <div className="border-t border-[#252d3d] overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-[#0f1117]">
-                        {['Наименование', 'Артикул', 'Категория', 'Кол-во', 'Цена', 'Сумма'].map(h => (
-                          <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-[#4b5568] uppercase tracking-wide">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredStocks.map(s => {
-                        const p = products.find(p => p.id === s.productId);
-                        if (!p) return null;
-                        const rowTotal = s.quantity * p.price;
-                        return (
-                          <tr key={s.productId} className="border-t border-[#252d3d] hover:bg-[#1e2637]/50 transition-colors">
-                            <td className="px-4 py-2.5">
-                              <div className="text-sm text-white font-medium">{p.name}</div>
-                            </td>
-                            <td className="px-4 py-2.5 text-xs text-[#8892a4] font-mono">{p.sku}</td>
-                            <td className="px-4 py-2.5 text-xs text-[#8892a4]">{getCatName(p.categoryId)}</td>
-                            <td className="px-4 py-2.5">
-                              <span className={`text-sm font-semibold ${s.quantity <= 5 ? 'text-[#ef4444]' : s.quantity <= 20 ? 'text-[#f59e0b]' : 'text-white'}`}>
-                                {s.quantity} {p.unit}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5 text-sm text-[#8892a4]">{p.price.toLocaleString('ru-RU')} ₽</td>
-                            <td className="px-4 py-2.5 text-sm font-semibold text-[#10b981]">{rowTotal.toLocaleString('ru-RU')} ₽</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-[#0f1117] border-t border-[#252d3d]">
-                        <td colSpan={5} className="px-4 py-2.5 text-xs text-[#4b5568]">Итого: {filteredStocks.length} позиций</td>
-                        <td className="px-4 py-2.5 text-sm font-bold text-[#10b981]">{totalVal.toLocaleString('ru-RU')} ₽</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )
-            )}
+            <div className="text-right flex-shrink-0">
+              <div className="text-sm font-semibold text-[var(--foreground)]">{op.quantity} {products.find(p => p.id === op.productId)?.unit || 'шт'}</div>
+              {op.amount > 0 && <div className="text-xs text-[#4b5568]">{op.amount.toLocaleString('ru-RU')} ₽</div>}
+            </div>
           </div>
         );
       })}
-    </div>
-  );
-}
-
-/* ─────────── СПИСОК ОПЕРАЦИЙ (ПРИХОД/СПИСАНИЕ/ПЕРЕМЕЩЕНИЕ) ─────────── */
-function OpListTab({ tab, ops, products, warehouses, employees, whFilter, setWhFilter, search, setSearch, dateFrom, setDateFrom, dateTo, setDateTo, offWarehouses, onAdd }: {
-  tab: Tab; ops: StockOperation[];
-  products: Product[]; warehouses: WarehouseType[];
-  employees: ReturnType<typeof useCRMStore>['employees'];
-  whFilter: string; setWhFilter: (v: string) => void;
-  search: string; setSearch: (v: string) => void;
-  dateFrom: string; setDateFrom: (v: string) => void;
-  dateTo: string; setDateTo: (v: string) => void;
-  offWarehouses: WarehouseType[]; onAdd: () => void;
-}) {
-  const cfg = OP_CONFIG[tab === 'income' ? 'receipt' : tab === 'outcome' ? 'writeoff' : 'transfer'];
-  const totalSum = ops.reduce((s, o) => s + o.amount, 0);
-  const totalQty = ops.reduce((s, o) => s + o.quantity, 0);
-
-  return (
-    <div className="space-y-4">
-      {/* Фильтры */}
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <div className="flex flex-wrap gap-2">
-          <div className="relative">
-            <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4b5568]" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по товару..." className="bg-[#1e2637] border border-[#252d3d] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] w-48" />
-          </div>
-          <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6] cursor-pointer">
-            <option value="all">Все склады</option>
-            {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6]" title="Дата от" />
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6]" title="Дата до" />
-          {(search || whFilter !== 'all' || dateFrom || dateTo) && (
-            <button onClick={() => { setSearch(''); setWhFilter('all'); setDateFrom(''); setDateTo(''); }} className="px-3 py-2 text-xs text-[#ef4444] hover:bg-[#ef4444]/10 rounded-lg transition-colors">
-              <Icon name="X" size={13} />
-            </button>
-          )}
-        </div>
-        <button onClick={onAdd} className={`flex items-center gap-2 px-4 py-2 ${cfg.btnBg} text-white rounded-lg text-sm font-medium transition-colors`}>
-          <Icon name="Plus" size={14} />{cfg.label}
-        </button>
-      </div>
-
-      {/* Итоги */}
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: 'Документов', value: ops.length },
-          { label: 'Товаров (шт)', value: totalQty },
-          { label: 'Сумма', value: `${totalSum.toLocaleString('ru-RU')} ₽` },
-        ].map(s => (
-          <div key={s.label} className="bg-[#161b27] border border-[#252d3d] rounded-xl px-4 py-3">
-            <div className={`text-lg font-bold ${cfg.color}`}>{s.value}</div>
-            <div className="text-xs text-[#4b5568]">{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Таблица */}
-      <div className="bg-[#161b27] border border-[#252d3d] rounded-xl overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-[#0f1117] border-b border-[#252d3d]">
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Дата</th>
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Товар</th>
-              {tab === 'move' && <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Откуда → Куда</th>}
-              {tab !== 'move' && <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Склад</th>}
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Кол-во</th>
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Цена</th>
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Сумма</th>
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Ответств.</th>
-              <th className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase">Примечание</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ops.length === 0 && (
-              <tr><td colSpan={8} className="py-14 text-center text-sm text-[#4b5568]">
-                <Icon name={cfg.icon} size={32} className="mx-auto mb-2 opacity-20" />
-                Нет записей
-              </td></tr>
-            )}
-            {ops.map(op => {
-              const p = products.find(p => p.id === op.productId);
-              const wh = warehouses.find(w => w.id === op.warehouseId);
-              const toWh = warehouses.find(w => w.id === op.toWarehouseId);
-              const emp = employees.find(e => e.id === op.employeeId);
-              return (
-                <tr key={op.id} className="border-t border-[#252d3d] hover:bg-[#1e2637]/50 transition-colors">
-                  <td className="px-4 py-3 text-xs text-[#8892a4] whitespace-nowrap">
-                    {new Date(op.date).toLocaleDateString('ru-RU')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-white">{p?.name || '—'}</div>
-                    {p?.sku && <div className="text-[10px] text-[#4b5568] font-mono">{p.sku}</div>}
-                  </td>
-                  {tab === 'move' ? (
-                    <td className="px-4 py-3 text-xs text-[#8892a4]">
-                      <span>{wh?.name || '—'}</span>
-                      <Icon name="ArrowRight" size={10} className="inline mx-1 text-[#4b5568]" />
-                      <span className="text-[#3b82f6]">{toWh?.name || '—'}</span>
-                    </td>
-                  ) : (
-                    <td className="px-4 py-3 text-xs text-[#8892a4]">{wh?.name || '—'}</td>
-                  )}
-                  <td className="px-4 py-3 text-sm font-medium text-white">{op.quantity} {p?.unit || ''}</td>
-                  <td className="px-4 py-3 text-sm text-[#8892a4]">{op.price.toLocaleString('ru-RU')} ₽</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-white">{op.amount.toLocaleString('ru-RU')} ₽</td>
-                  <td className="px-4 py-3 text-xs text-[#8892a4]">
-                    {emp ? `${emp.lastName} ${emp.firstName[0]}.` : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-[#8892a4] max-w-[140px] truncate">{op.notes || '—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────── НОМЕНКЛАТУРА ─────────── */
-function ProductsTab({ products, categories, warehouseStock, offWarehouses, search, setSearch, catFilter, setCatFilter, onAdd, onEdit, onAddCategory, onEditCategory }: {
-  products: Product[]; categories: Category[];
-  warehouseStock: ReturnType<typeof useCRMStore>['warehouseStock'];
-  offWarehouses: WarehouseType[];
-  search: string; setSearch: (v: string) => void;
-  catFilter: string; setCatFilter: (v: string) => void;
-  onAdd: () => void; onEdit: (p: Product) => void;
-  onAddCategory: () => void; onEditCategory: (c: Category) => void;
-}) {
-  const [view, setView] = useState<'products' | 'categories'>('products');
-
-  const getStock = (productId: string) =>
-    offWarehouses.reduce((sum, wh) =>
-      sum + (warehouseStock.find(s => s.warehouseId === wh.id && s.productId === productId)?.quantity ?? 0), 0);
-
-  const getCatName = (id: string) => {
-    const cat = categories.find(c => c.id === id);
-    if (!cat) return '—';
-    if (cat.parentId) {
-      const parent = categories.find(c => c.id === cat.parentId);
-      return parent ? `${parent.name} / ${cat.name}` : cat.name;
-    }
-    return cat.name;
-  };
-
-  const filtered = products.filter(p => {
-    if (catFilter !== 'all' && p.categoryId !== catFilter) return false;
-    if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.sku.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
-
-  const rootCats = categories.filter(c => !c.parentId);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex gap-1 bg-[#0f1117] rounded-lg p-1">
-          <button onClick={() => setView('products')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${view === 'products' ? 'bg-[#1e2637] text-white' : 'text-[#4b5568] hover:text-white'}`}>
-            Товары ({products.length})
-          </button>
-          <button onClick={() => setView('categories')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${view === 'categories' ? 'bg-[#1e2637] text-white' : 'text-[#4b5568] hover:text-white'}`}>
-            Категории ({categories.length})
-          </button>
-        </div>
-        <div className="flex gap-2">
-          {view === 'products' && (
-            <>
-              <div className="relative">
-                <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4b5568]" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск..." className="bg-[#1e2637] border border-[#252d3d] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] w-44" />
-              </div>
-              <select value={catFilter} onChange={e => setCatFilter(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6] cursor-pointer">
-                <option value="all">Все категории</option>
-                {rootCats.map(c => (
-                  <optgroup key={c.id} label={c.name}>
-                    <option value={c.id}>{c.name}</option>
-                    {categories.filter(sc => sc.parentId === c.id).map(sc => (
-                      <option key={sc.id} value={sc.id}>  {sc.name}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              <button onClick={onAdd} className="flex items-center gap-2 px-4 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm font-medium transition-colors">
-                <Icon name="Plus" size={14} />Товар
-              </button>
-            </>
-          )}
-          {view === 'categories' && (
-            <button onClick={onAddCategory} className="flex items-center gap-2 px-4 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm font-medium transition-colors">
-              <Icon name="Plus" size={14} />Категория
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Список товаров */}
-      {view === 'products' && (
-        <div className="bg-[#161b27] border border-[#252d3d] rounded-xl overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[#0f1117] border-b border-[#252d3d]">
-                {['Наименование', 'Артикул', 'Категория', 'Ед.', 'Цена', 'На складе', ''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && (
-                <tr><td colSpan={7} className="py-12 text-center text-sm text-[#4b5568]">
-                  {search || catFilter !== 'all' ? 'Ничего не найдено' : 'Товаров нет'}
-                </td></tr>
-              )}
-              {filtered.map(p => {
-                const stock = getStock(p.id);
-                return (
-                  <tr key={p.id} onClick={() => onEdit(p)} className="border-t border-[#252d3d] hover:bg-[#1e2637] cursor-pointer transition-colors">
-                    <td className="px-4 py-3 text-sm font-medium text-white">{p.name}</td>
-                    <td className="px-4 py-3 text-xs text-[#8892a4] font-mono">{p.sku}</td>
-                    <td className="px-4 py-3 text-xs text-[#8892a4]">{getCatName(p.categoryId)}</td>
-                    <td className="px-4 py-3 text-xs text-[#8892a4]">{p.unit}</td>
-                    <td className="px-4 py-3 text-sm text-[#10b981] font-medium">{p.price.toLocaleString('ru-RU')} ₽</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-sm font-semibold ${stock === 0 ? 'text-[#4b5568]' : stock <= 5 ? 'text-[#ef4444]' : stock <= 20 ? 'text-[#f59e0b]' : 'text-white'}`}>
-                        {stock} {p.unit}
-                      </span>
-                      {stock === 0 && <span className="ml-1.5 text-[10px] text-[#ef4444] bg-[#ef4444]/10 px-1.5 py-0.5 rounded">нет</span>}
-                      {stock > 0 && stock <= 5 && <span className="ml-1.5 text-[10px] text-[#f59e0b] bg-[#f59e0b]/10 px-1.5 py-0.5 rounded">мало</span>}
-                    </td>
-                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => onEdit(p)} className="p-1.5 hover:bg-[#252d3d] rounded text-[#4b5568] hover:text-white transition-colors">
-                        <Icon name="Pencil" size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Список категорий */}
-      {view === 'categories' && (
-        <div className="space-y-2">
-          {rootCats.length === 0 && (
-            <div className="text-center py-12 text-sm text-[#4b5568]">Категорий нет</div>
-          )}
-          {rootCats.map(cat => {
-            const subCats = categories.filter(c => c.parentId === cat.id);
-            const catProducts = products.filter(p => p.categoryId === cat.id).length;
-            const subProducts = subCats.reduce((s, sc) => s + products.filter(p => p.categoryId === sc.id).length, 0);
-            return (
-              <div key={cat.id} className="bg-[#161b27] border border-[#252d3d] rounded-xl overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 hover:bg-[#1e2637] cursor-pointer transition-colors" onClick={() => onEditCategory(cat)}>
-                  <div className="flex items-center gap-3">
-                    <Icon name="FolderOpen" size={16} className="text-[#f59e0b]" />
-                    <span className="text-sm font-medium text-white">{cat.name}</span>
-                    <span className="text-xs text-[#4b5568]">{catProducts + subProducts} товаров</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={e => { e.stopPropagation(); onEditCategory(cat); }} className="p-1.5 hover:bg-[#252d3d] rounded text-[#4b5568] hover:text-white transition-colors">
-                      <Icon name="Pencil" size={13} />
-                    </button>
-                  </div>
-                </div>
-                {subCats.map(sc => (
-                  <div key={sc.id} className="flex items-center justify-between px-4 py-2.5 pl-10 border-t border-[#252d3d] hover:bg-[#1e2637] cursor-pointer transition-colors" onClick={() => onEditCategory(sc)}>
-                    <div className="flex items-center gap-3">
-                      <Icon name="Folder" size={14} className="text-[#4b5568]" />
-                      <span className="text-xs text-[#8892a4]">{sc.name}</span>
-                      <span className="text-xs text-[#4b5568]">{products.filter(p => p.categoryId === sc.id).length} товаров</span>
-                    </div>
-                    <button onClick={e => { e.stopPropagation(); onEditCategory(sc); }} className="p-1.5 hover:bg-[#252d3d] rounded text-[#4b5568] hover:text-white transition-colors">
-                      <Icon name="Pencil" size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─────────── ИСТОРИЯ ОПЕРАЦИЙ ─────────── */
-function HistoryTab({ ops, products, warehouses, employees, search, setSearch, whFilter, setWhFilter, opTypeFilter, setOpTypeFilter, dateFrom, setDateFrom, dateTo, setDateTo, offWarehouses }: {
-  ops: StockOperation[]; products: Product[];
-  warehouses: WarehouseType[]; employees: ReturnType<typeof useCRMStore>['employees'];
-  search: string; setSearch: (v: string) => void;
-  whFilter: string; setWhFilter: (v: string) => void;
-  opTypeFilter: 'all' | StockOperationType; setOpTypeFilter: (v: 'all' | StockOperationType) => void;
-  dateFrom: string; setDateFrom: (v: string) => void;
-  dateTo: string; setDateTo: (v: string) => void;
-  offWarehouses: WarehouseType[];
-}) {
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <div className="relative">
-          <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4b5568]" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по товару..." className="bg-[#1e2637] border border-[#252d3d] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-[#4b5568] focus:outline-none focus:border-[#3b82f6] w-48" />
-        </div>
-        <select value={opTypeFilter} onChange={e => setOpTypeFilter(e.target.value as 'all' | StockOperationType)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6] cursor-pointer">
-          <option value="all">Все типы</option>
-          {(Object.keys(OP_CONFIG) as StockOperationType[]).map(t => (
-            <option key={t} value={t}>{OP_CONFIG[t].label}</option>
-          ))}
-        </select>
-        <select value={whFilter} onChange={e => setWhFilter(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6] cursor-pointer">
-          <option value="all">Все склады</option>
-          {offWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
-        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6]" />
-        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-[#1e2637] border border-[#252d3d] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6]" />
-      </div>
-
-      <div className="bg-[#161b27] border border-[#252d3d] rounded-xl overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-[#0f1117] border-b border-[#252d3d]">
-              {['Дата', 'Тип', 'Товар', 'Склад', 'Кол-во', 'Сумма', 'Ответств.', 'Примечание'].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold text-[#4b5568] uppercase tracking-wide">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {ops.length === 0 && (
-              <tr><td colSpan={8} className="py-14 text-center text-sm text-[#4b5568]">
-                <Icon name="ClipboardList" size={32} className="mx-auto mb-2 opacity-20" />
-                Нет операций
-              </td></tr>
-            )}
-            {ops.map(op => {
-              const p = products.find(p => p.id === op.productId);
-              const wh = warehouses.find(w => w.id === op.warehouseId);
-              const toWh = warehouses.find(w => w.id === op.toWarehouseId);
-              const emp = employees.find(e => e.id === op.employeeId);
-              const cfg = OP_CONFIG[op.type];
-              return (
-                <tr key={op.id} className="border-t border-[#252d3d] hover:bg-[#1e2637]/50 transition-colors">
-                  <td className="px-4 py-3 text-xs text-[#8892a4] whitespace-nowrap">
-                    {new Date(op.date).toLocaleDateString('ru-RU')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium px-2 py-1 rounded-full border ${cfg.bg} ${cfg.color}`}>
-                      {cfg.label}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-white">{p?.name || '—'}</div>
-                    {p?.sku && <div className="text-[10px] text-[#4b5568] font-mono">{p.sku}</div>}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-[#8892a4]">
-                    {wh?.name || '—'}
-                    {toWh && <><Icon name="ArrowRight" size={9} className="inline mx-1" />{toWh.name}</>}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-medium text-white">{op.quantity} {p?.unit || ''}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-white">{op.amount.toLocaleString('ru-RU')} ₽</td>
-                  <td className="px-4 py-3 text-xs text-[#8892a4]">
-                    {emp ? `${emp.lastName} ${emp.firstName[0]}.` : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-[#8892a4] max-w-[120px] truncate">{op.notes || '—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────── ФОРМА ОПЕРАЦИИ ─────────── */
-function OperationForm({ type, warehouses, products, categories, employees, onSave, onCancel }: {
-  type: StockOperationType;
-  warehouses: WarehouseType[]; products: Product[];
-  categories: Category[];
-  employees: ReturnType<typeof useCRMStore>['employees'];
-  onSave: (data: Omit<StockOperation, 'id' | 'officeId' | 'createdAt'>) => void;
-  onCancel: () => void;
-}) {
-  const cfg = OP_CONFIG[type];
-  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id || '');
-  const [toWarehouseId, setToWarehouseId] = useState('');
-  const [productId, setProductId] = useState('');
-  const [quantity, setQuantity] = useState('');
-  const [price, setPrice] = useState('');
-  const [employeeId, setEmployeeId] = useState(employees[0]?.id || '');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [notes, setNotes] = useState('');
-
-  const selectedProduct = products.find(p => p.id === productId);
-
-  const handleProductChange = (id: string) => {
-    setProductId(id);
-    const p = products.find(p => p.id === id);
-    if (p) setPrice(String(p.price));
-  };
-
-  const amount = (parseFloat(quantity) || 0) * (parseFloat(price) || 0);
-
-  const getCatName = (id: string) => {
-    const cat = categories.find(c => c.id === id);
-    if (!cat) return '';
-    if (cat.parentId) {
-      const parent = categories.find(c => c.id === cat.parentId);
-      return parent ? `${parent.name} / ${cat.name}` : cat.name;
-    }
-    return cat.name;
-  };
-
-  const handleSave = () => {
-    if (!warehouseId || !productId || !quantity) return;
-    onSave({
-      warehouseId,
-      toWarehouseId: type === 'transfer' ? toWarehouseId : undefined,
-      type,
-      productId,
-      quantity: parseFloat(quantity),
-      price: parseFloat(price) || 0,
-      amount,
-      employeeId,
-      date,
-      notes,
-    });
-  };
-
-  const rootCats = categories.filter(c => !c.parentId);
-
-  return (
-    <div className="space-y-4">
-      {/* Тип операции */}
-      <div className={`flex items-center gap-2 text-xs font-semibold px-3 py-2.5 rounded-lg border ${cfg.bg} ${cfg.color}`}>
-        <Icon name={cfg.icon} size={14} />
-        {cfg.label}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>Склад {type === 'transfer' ? '(откуда)' : ''} *</label>
-          <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className={inputCls + ' cursor-pointer'}>
-            <option value="">— Выберите —</option>
-            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
-        </div>
-        {type === 'transfer' && (
-          <div>
-            <label className={labelCls}>Склад назначения *</label>
-            <select value={toWarehouseId} onChange={e => setToWarehouseId(e.target.value)} className={inputCls + ' cursor-pointer'}>
-              <option value="">— Выберите —</option>
-              {warehouses.filter(w => w.id !== warehouseId).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-          </div>
-        )}
-        {type !== 'transfer' && (
-          <div>
-            <label className={labelCls}>Дата *</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
-          </div>
-        )}
-      </div>
-
-      {type === 'transfer' && (
-        <div>
-          <label className={labelCls}>Дата *</label>
-          <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
-        </div>
-      )}
-
-      <div>
-        <label className={labelCls}>Товар *</label>
-        <select value={productId} onChange={e => handleProductChange(e.target.value)} className={inputCls + ' cursor-pointer'}>
-          <option value="">— Выберите товар —</option>
-          {rootCats.map(cat => {
-            const catProds = products.filter(p => p.categoryId === cat.id);
-            const subCats = categories.filter(c => c.parentId === cat.id);
-            const hasProds = catProds.length > 0 || subCats.some(sc => products.find(p => p.categoryId === sc.id));
-            if (!hasProds) return null;
-            return (
-              <optgroup key={cat.id} label={cat.name}>
-                {catProds.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}
-                {subCats.map(sc =>
-                  products.filter(p => p.categoryId === sc.id).map(p =>
-                    <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-                  )
-                )}
-              </optgroup>
-            );
-          })}
-          {products.filter(p => !categories.find(c => c.id === p.categoryId)).map(p =>
-            <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-          )}
-        </select>
-        {selectedProduct && (
-          <div className="mt-1.5 text-xs text-[#4b5568]">
-            {getCatName(selectedProduct.categoryId)} · {selectedProduct.unit}
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>Количество *</label>
-          <div className="flex gap-2">
-            <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} min="0.001" step="any" className={inputCls} placeholder="0" />
-            {selectedProduct && <span className="flex items-center text-xs text-[#4b5568] px-2 bg-[#0f1117] border border-[#252d3d] rounded-lg">{selectedProduct.unit}</span>}
-          </div>
-        </div>
-        <div>
-          <label className={labelCls}>Цена за ед., ₽</label>
-          <input type="number" value={price} onChange={e => setPrice(e.target.value)} min="0" className={inputCls} placeholder="0" />
-        </div>
-      </div>
-
-      {quantity && price && (
-        <div className="flex items-center justify-between bg-[#0f1117] border border-[#252d3d] rounded-xl px-4 py-3">
-          <span className="text-xs text-[#4b5568]">Итого</span>
-          <span className="text-lg font-bold text-white">{amount.toLocaleString('ru-RU')} ₽</span>
-        </div>
-      )}
-
-      <div>
-        <label className={labelCls}>Ответственный</label>
-        <select value={employeeId} onChange={e => setEmployeeId(e.target.value)} className={inputCls + ' cursor-pointer'}>
-          <option value="">— Выберите —</option>
-          {employees.map(e => <option key={e.id} value={e.id}>{e.lastName} {e.firstName}</option>)}
-        </select>
-      </div>
-
-      <div>
-        <label className={labelCls}>Примечание</label>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls} placeholder="Необязательно..." />
-      </div>
-
-      <div className="flex gap-3 pt-2">
-        <button
-          onClick={handleSave}
-          disabled={!warehouseId || !productId || !quantity || (type === 'transfer' && !toWarehouseId)}
-          className={`flex-1 py-2.5 ${cfg.btnBg} disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors`}
-        >
-          Провести
-        </button>
-        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] rounded-lg text-sm transition-colors">
-          Отмена
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────── ФОРМА ТОВАРА ─────────── */
-function ProductForm({ product, categories, onSave, onDelete, onCancel }: {
-  product?: Product; categories: Category[];
-  onSave: (data: Omit<Product, 'id'>) => void;
-  onDelete?: () => void; onCancel: () => void;
-}) {
-  const [name, setName] = useState(product?.name || '');
-  const [sku, setSku] = useState(product?.sku || '');
-  const [categoryId, setCategoryId] = useState(product?.categoryId || '');
-  const [unit, setUnit] = useState(product?.unit || 'шт');
-  const [price, setPrice] = useState(String(product?.price || ''));
-  const [description, setDescription] = useState(product?.description || '');
-
-  const rootCats = categories.filter(c => !c.parentId);
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className={labelCls}>Наименование *</label>
-        <input value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="Название товара" />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>Артикул (SKU)</label>
-          <input value={sku} onChange={e => setSku(e.target.value)} className={inputCls} placeholder="KB-CAT5E" />
-        </div>
-        <div>
-          <label className={labelCls}>Единица измерения</label>
-          <select value={unit} onChange={e => setUnit(e.target.value)} className={inputCls + ' cursor-pointer'}>
-            {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>Категория</label>
-          <select value={categoryId} onChange={e => setCategoryId(e.target.value)} className={inputCls + ' cursor-pointer'}>
-            <option value="">Без категории</option>
-            {rootCats.map(c => (
-              <optgroup key={c.id} label={c.name}>
-                <option value={c.id}>{c.name}</option>
-                {categories.filter(sc => sc.parentId === c.id).map(sc => (
-                  <option key={sc.id} value={sc.id}>  {sc.name}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>Цена, ₽</label>
-          <input type="number" value={price} onChange={e => setPrice(e.target.value)} min="0" className={inputCls} placeholder="0" />
-        </div>
-      </div>
-      <div>
-        <label className={labelCls}>Описание</label>
-        <input value={description} onChange={e => setDescription(e.target.value)} className={inputCls} placeholder="Краткое описание" />
-      </div>
-      <div className="flex gap-3 pt-2">
-        <button
-          onClick={() => onSave({ name, sku, categoryId, unit, price: parseFloat(price) || 0, description })}
-          disabled={!name}
-          className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          Сохранить
-        </button>
-        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
-        {onDelete && (
-          <button onClick={onDelete} className="px-4 py-2.5 bg-[#ef4444]/10 hover:bg-[#ef4444]/20 text-[#ef4444] rounded-lg text-sm transition-colors">
-            <Icon name="Trash2" size={14} />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ─────────── ФОРМА СКЛАДА ─────────── */
-function WarehouseForm({ warehouse, onSave, onDelete, onCancel }: {
-  warehouse?: WarehouseType;
-  onSave: (data: Omit<WarehouseType, 'id' | 'officeId'>) => void;
-  onDelete?: () => void; onCancel: () => void;
-}) {
-  const [name, setName] = useState(warehouse?.name || '');
-  const [address, setAddress] = useState(warehouse?.address || '');
-  const [description, setDescription] = useState(warehouse?.description || '');
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className={labelCls}>Название *</label>
-        <input value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="Основной склад" />
-      </div>
-      <div>
-        <label className={labelCls}>Адрес</label>
-        <input value={address} onChange={e => setAddress(e.target.value)} className={inputCls} placeholder="г. Абакан, ул. Ленина 1" />
-      </div>
-      <div>
-        <label className={labelCls}>Описание</label>
-        <input value={description} onChange={e => setDescription(e.target.value)} className={inputCls} placeholder="Описание склада" />
-      </div>
-      <div className="flex gap-3 pt-2">
-        <button onClick={() => onSave({ name, address, description })} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
-          Сохранить
-        </button>
-        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
-        {onDelete && (
-          <button onClick={onDelete} className="px-4 py-2.5 bg-[#ef4444]/10 hover:bg-[#ef4444]/20 text-[#ef4444] rounded-lg text-sm transition-colors">
-            <Icon name="Trash2" size={14} />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ─────────── ФОРМА КАТЕГОРИИ ─────────── */
-function CategoryForm({ category, categories, onSave, onDelete, onCancel }: {
-  category?: Category; categories: Category[];
-  onSave: (data: Omit<Category, 'id'>) => void;
-  onDelete?: () => void; onCancel: () => void;
-}) {
-  const [name, setName] = useState(category?.name || '');
-  const [parentId, setParentId] = useState(category?.parentId || '');
-
-  const rootCats = categories.filter(c => !c.parentId && c.id !== category?.id);
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className={labelCls}>Название *</label>
-        <input value={name} onChange={e => setName(e.target.value)} className={inputCls} placeholder="Кабели и провода" />
-      </div>
-      <div>
-        <label className={labelCls}>Родительская категория</label>
-        <select value={parentId} onChange={e => setParentId(e.target.value)} className={inputCls + ' cursor-pointer'}>
-          <option value="">Корневая (без родителя)</option>
-          {rootCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
-      <div className="flex gap-3 pt-2">
-        <button onClick={() => onSave({ name, parentId: parentId || undefined })} disabled={!name} className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
-          Сохранить
-        </button>
-        <button onClick={onCancel} className="px-4 py-2.5 bg-[#1e2637] hover:bg-[#252d3d] text-[#8892a4] rounded-lg text-sm transition-colors">Отмена</button>
-        {onDelete && (
-          <button onClick={onDelete} className="px-4 py-2.5 bg-[#ef4444]/10 hover:bg-[#ef4444]/20 text-[#ef4444] rounded-lg text-sm transition-colors">
-            <Icon name="Trash2" size={14} />
-          </button>
-        )}
-      </div>
     </div>
   );
 }

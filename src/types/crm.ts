@@ -164,6 +164,17 @@ export interface Category {
   parentId?: string;
 }
 
+export interface Supplier {
+  id: string;
+  name: string;
+  inn?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  contactPerson?: string;
+  notes?: string;
+}
+
 export interface Product {
   id: string;
   categoryId: string;
@@ -172,9 +183,19 @@ export interface Product {
   unit: string;
   description: string;
   price: number;
+  isSerial?: boolean;
+  photoUrl?: string;
 }
 
 export type StockOperationType = 'receipt' | 'writeoff' | 'transfer' | 'sale' | 'return';
+
+export interface StockOperationItem {
+  productId: string;
+  quantity: number;
+  price: number;
+  amount: number;
+  serialNumbers?: string[];
+}
 
 export interface StockOperation {
   id: string;
@@ -190,12 +211,17 @@ export interface StockOperation {
   date: string;
   notes: string;
   createdAt: string;
+  supplierId?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  items?: StockOperationItem[];
 }
 
 export interface WarehouseStock {
   warehouseId: string;
   productId: string;
   quantity: number;
+  serialNumbers?: string[];
 }
 
 export interface CashRegister {
