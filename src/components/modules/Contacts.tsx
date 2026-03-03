@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useCRMStore } from '@/store/crmStore';
 import { Subscriber, CashRegister } from '@/types/crm';
 import Icon from '@/components/ui/icon';
-import { useLightBilling, LBSubscriber, LBSubscriberTariff, LBPaymentHistory } from '@/hooks/useLightBilling';
+import { useLightBilling, LBSubscriber, LBSubscriberTariff, LBPaymentHistory, LBPromisedFormInfo } from '@/hooks/useLightBilling';
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 const inputCls = "w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors";
@@ -402,7 +402,9 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
   const [loadingTariffs, setLoadingTariffs] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [promisedLoading, setPromisedLoading] = useState(false);
-  const [promisedDays, setPromisedDays] = useState('7');
+  const [promisedForm, setPromisedForm] = useState<LBPromisedFormInfo | null>(null);
+  const [promisedDays, setPromisedDays] = useState('');
+  const [promisedSumm, setPromisedSumm] = useState('');
   const [promisedResult, setPromisedResult] = useState('');
   const [showPromised, setShowPromised] = useState(false);
 
@@ -412,6 +414,17 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
     lb.getSubscriberTariffs(lbId).then(t => { setLbTariffs(t); setLoadingTariffs(false); });
     setLoadingPayments(true);
     lb.getLBPayments(sub.contractNumber, lbId).then(p => { setLbPayments(p); setLoadingPayments(false); });
+    // Загружаем форму обещанного платежа
+    lb.getPromisedInfo(lbId).then(info => {
+      if (info) {
+        setPromisedForm(info);
+        // Выбираем первый вариант по умолчанию
+        if (info.days_options.length > 0) {
+          const sel = info.days_options.find(o => o.selected) || info.days_options[0];
+          setPromisedDays(sel.value);
+        }
+      }
+    });
   }, [lbId]);
 
   const tariffSum = lbTariffs.reduce((sum, t) => {
@@ -423,15 +436,26 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
     if (!lbId) return;
     setPromisedLoading(true);
     setPromisedResult('');
-    const res = await lb.makePromisedPayment(lbId, promisedDays);
+    const res = await lb.makePromisedPayment(lbId, promisedDays, promisedSumm || undefined);
     setPromisedLoading(false);
-    setPromisedResult(res.success ? '✓ Обещанный платёж активирован' : 'Ошибка активации');
+    console.log('[promised]', res);
+    setPromisedResult(res.success ? '✓ Обещанный платёж активирован' : 'Ошибка — проверьте LightBilling');
   };
 
-  // Объединяем историю: LB + CRM (дедупликация по сумме+дате не нужна — показываем все)
+  // Объединяем историю: LB + CRM
   const allPayments = [
-    ...lbPayments.map(p => ({ date: p.date, amount: p.amount, source: p.source || 'LightBilling', comment: p.comment, fromLB: true })),
-    ...crmPayments.slice().reverse().map(p => ({ date: new Date(p.date).toLocaleDateString('ru-RU'), amount: String(p.amount), source: 'CRM', comment: p.comment || '', fromLB: false })),
+    ...lbPayments.map(p => ({
+      date: p.date,
+      amount: p.amount,
+      operator: p.operator || 'LightBilling',
+      fromLB: true,
+    })),
+    ...crmPayments.slice().reverse().map(p => ({
+      date: new Date(p.date).toLocaleDateString('ru-RU'),
+      amount: String(p.amount),
+      operator: 'CRM',
+      fromLB: false,
+    })),
   ];
 
   return (
@@ -510,24 +534,53 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
           >
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
               <Icon name="Clock" size={12} className="text-[#f59e0b]" />Обещанный платёж
+              {promisedForm?.current_promised && (
+                <span className="text-[10px] text-[#f59e0b] font-normal normal-case">до {promisedForm.current_promised}</span>
+              )}
             </span>
             <Icon name={showPromised ? 'ChevronUp' : 'ChevronDown'} size={14} className="text-muted-foreground" />
           </button>
           {showPromised && (
             <div className="mt-3 space-y-2">
-              <div className="flex gap-2">
-                <select value={promisedDays} onChange={e => setPromisedDays(e.target.value)} className={inputCls + ' cursor-pointer flex-1'}>
-                  {['3','5','7','10','14','30'].map(d => <option key={d} value={d}>{d} дней</option>)}
-                </select>
-                <button
-                  onClick={handlePromised}
-                  disabled={promisedLoading}
-                  className="px-4 py-2 bg-[#f59e0b] hover:bg-[#d97706] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex-shrink-0 flex items-center gap-1.5"
-                >
-                  {promisedLoading ? <Icon name="Loader" size={13} className="animate-spin" /> : <Icon name="Clock" size={13} />}
-                  Активировать
-                </button>
+              {/* Количество дней — из опций LB или фиксированные */}
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1 block">Срок</label>
+                {promisedForm && promisedForm.days_options.length > 0 ? (
+                  <select value={promisedDays} onChange={e => setPromisedDays(e.target.value)} className={inputCls + ' cursor-pointer'}>
+                    {promisedForm.days_options.map(o => (
+                      <option key={o.value} value={o.value}>{o.label || `${o.value} дней`}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <select value={promisedDays} onChange={e => setPromisedDays(e.target.value)} className={inputCls + ' cursor-pointer'}>
+                    {['3','5','7','10','14','30'].map(d => <option key={d} value={d}>{d} дней</option>)}
+                  </select>
+                )}
               </div>
+              {/* Поле суммы если LB требует */}
+              {(promisedForm?.has_summ_field || promisedForm?.summ_options.length) ? (
+                <div>
+                  <label className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1 block">Сумма</label>
+                  {promisedForm.summ_options.length > 0 ? (
+                    <select value={promisedSumm} onChange={e => setPromisedSumm(e.target.value)} className={inputCls + ' cursor-pointer'}>
+                      <option value="">— Выберите —</option>
+                      {promisedForm.summ_options.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input type="number" value={promisedSumm} onChange={e => setPromisedSumm(e.target.value)} className={inputCls} placeholder="Сумма, ₽" />
+                  )}
+                </div>
+              ) : null}
+              <button
+                onClick={handlePromised}
+                disabled={promisedLoading || !promisedDays}
+                className="w-full py-2 bg-[#f59e0b] hover:bg-[#d97706] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5"
+              >
+                {promisedLoading ? <Icon name="Loader" size={13} className="animate-spin" /> : <Icon name="Clock" size={13} />}
+                Активировать обещанный платёж
+              </button>
               {promisedResult && (
                 <div className={`text-xs px-3 py-2 rounded-lg ${promisedResult.startsWith('✓') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
                   {promisedResult}
@@ -569,22 +622,26 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
           <div className="text-center text-xs text-muted-foreground py-3">История пополнений пуста</div>
         ) : (
           <div className="bg-muted/50 border border-border rounded-xl overflow-hidden">
-            {allPayments.slice(0, 20).map((p, i) => (
-              <div key={i} className="flex items-center justify-between px-3 py-2.5 border-b border-border last:border-0">
-                <div className="flex items-center gap-2">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${p.fromLB ? 'bg-[#3b82f6]/20' : 'bg-emerald-500/20'}`}>
-                    <Icon name={p.fromLB ? 'Zap' : 'ArrowDownLeft'} size={11} className={p.fromLB ? 'text-[#3b82f6]' : 'text-emerald-500'} />
+            {allPayments.slice(0, 30).map((p, i) => {
+              const amountNum = parseFloat(p.amount.replace(',', '.').replace(/\s/g, ''));
+              const isNeg = amountNum < 0;
+              return (
+                <div key={i} className="flex items-center justify-between px-3 py-2.5 border-b border-border last:border-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${p.fromLB ? 'bg-[#3b82f6]/20' : 'bg-emerald-500/20'}`}>
+                      <Icon name={p.fromLB ? 'Zap' : 'ArrowDownLeft'} size={11} className={p.fromLB ? 'text-[#3b82f6]' : 'text-emerald-500'} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs text-foreground">{p.date}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{p.operator}</div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs text-foreground">{p.date}</div>
-                    <div className="text-[10px] text-muted-foreground">{p.source}{p.comment ? ` · ${p.comment}` : ''}</div>
+                  <div className={`text-sm font-bold flex-shrink-0 ml-2 ${isNeg ? 'text-red-400' : 'text-emerald-500'}`}>
+                    {!isNeg ? '+' : ''}{p.amount} ₽
                   </div>
                 </div>
-                <div className={`text-sm font-bold ${parseFloat(p.amount) < 0 ? 'text-red-400' : 'text-emerald-500'}`}>
-                  {parseFloat(p.amount) >= 0 ? '+' : ''}{p.amount} ₽
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

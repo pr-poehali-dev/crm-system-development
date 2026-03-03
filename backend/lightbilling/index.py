@@ -810,54 +810,73 @@ def handler(event: dict, context) -> dict:
             html = lb_request(f"?page=users/view&id={sub_id}")
             if 'page=login' in html:
                 return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
-            # Парсим таблицу тарифов — ищем блок с тарифами (table с тарифами)
+
+            print(f"[subscriber_tariffs] html_len={len(html)}")
+
             tariffs_found = []
-            # Ищем таблицу тарифов (обычно содержит колонки Тариф/Цена/Дата)
-            tariff_table_m = re.search(
-                r'(?:тариф|tariff)[^<]*</[^>]+>.*?<table[^>]*>(.*?)</table>',
-                html, re.DOTALL | re.IGNORECASE
+
+            # Стратегия 1: ищем строки таблицы содержащие id_tariff= (удаление тарифа)
+            # В LB тарифы абонента обычно в таблице с ссылками ?page=users/user-tariff&id=SUB&id_tariff=T&operation=del
+            rows_with_tariff = re.findall(
+                r'<tr[^>]*>(.*?)</tr>',
+                html, re.DOTALL
             )
-            if not tariff_table_m:
-                # Ищем все таблицы после h2/h3 содержащего "тариф"
-                tariff_section = re.search(
-                    r'<(?:h[2-4]|div)[^>]*>[^<]*[Тт]ариф[^<]*</(?:h[2-4]|div)>(.*?)<(?:h[2-4]|div)',
+            for row in rows_with_tariff:
+                if 'id_tariff=' not in row and 'user-tariff' not in row:
+                    continue
+                t_id_m = re.search(r'id_tariff=(\d+)', row)
+                t_id = t_id_m.group(1) if t_id_m else ""
+                cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                texts = [strip_tags(c).strip() for c in cells]
+                texts = [t for t in texts if t and len(t) > 1]
+                if not texts:
+                    continue
+                # Первый непустой текст — название тарифа
+                name = texts[0]
+                # Ищем цену — число с возможным знаком
+                price = ""
+                date_val = ""
+                for t in texts[1:]:
+                    clean = t.replace(',', '.').replace(' ', '').replace('\xa0', '')
+                    if re.match(r'^-?\d+\.?\d*$', clean) and not price:
+                        price = t
+                    elif re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
+                        date_val = t
+                tariffs_found.append({
+                    "id": t_id,
+                    "name": name,
+                    "price": price,
+                    "date": date_val,
+                    "raw": texts,
+                })
+
+            # Стратегия 2: ищем блок с заголовком "тариф" и следующую таблицу
+            if not tariffs_found:
+                tariff_section_m = re.search(
+                    r'(?:<[^>]+>[^<]*[Тт]ариф[^<]*</[^>]+>)\s*(.*?)\s*(?=<(?:h[2-6]|div\s+class=["\'][^"\']*(?:panel|card|block)))',
                     html, re.DOTALL
                 )
-                if tariff_section:
-                    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tariff_section.group(1), re.DOTALL)
+                if tariff_section_m:
+                    section = tariff_section_m.group(1)
+                    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', section, re.DOTALL)
                     for row in rows:
                         cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
                         texts = [strip_tags(c).strip() for c in cells]
                         texts = [t for t in texts if t]
-                        if len(texts) >= 2:
-                            # Ищем id тарифа в ссылках
+                        if len(texts) >= 1 and texts[0]:
                             t_id_m = re.search(r'id_tariff=(\d+)', row)
-                            t_id = t_id_m.group(1) if t_id_m else ""
                             tariffs_found.append({
-                                "id": t_id,
+                                "id": t_id_m.group(1) if t_id_m else "",
                                 "name": texts[0],
                                 "price": texts[1] if len(texts) > 1 else "",
                                 "date": texts[2] if len(texts) > 2 else "",
+                                "raw": texts,
                             })
-            else:
-                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tariff_table_m.group(1), re.DOTALL)
-                for row in rows:
-                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
-                    texts = [strip_tags(c).strip() for c in cells]
-                    texts = [t for t in texts if t]
-                    if len(texts) >= 1:
-                        t_id_m = re.search(r'id_tariff=(\d+)', row)
-                        t_id = t_id_m.group(1) if t_id_m else ""
-                        tariffs_found.append({
-                            "id": t_id,
-                            "name": texts[0],
-                            "price": texts[1] if len(texts) > 1 else "",
-                            "date": texts[2] if len(texts) > 2 else "",
-                        })
-            # Fallback: ищем все упоминания тарифов через паттерн id_tariff=
-            if not tariffs_found:
-                for m in re.finditer(r'id_tariff=(\d+)[^>]*>([^<]{1,80})', html):
-                    tariffs_found.append({"id": m.group(1), "name": m.group(2).strip(), "price": "", "date": ""})
+
+            print(f"[subscriber_tariffs] found={len(tariffs_found)} tariffs")
+            if tariffs_found:
+                print(f"[subscriber_tariffs] first={tariffs_found[0]}")
+
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
@@ -884,74 +903,172 @@ def handler(event: dict, context) -> dict:
             }
 
         elif action == "promised_payment":
-            # Обещанный платёж: GET ?page=users/promised&id=SUB_ID
+            # Обещанный платёж: GET/POST ?page=users/promised&id=SUB_ID
             sub_id = params.get("id", "")
             days = params.get("days", "")
+            summ = params.get("summ", "")  # сумма обещанного платежа (если требуется)
             if not sub_id:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id обязателен"})}
             promised_url = LB_BASE + f"?page=users/promised&id={sub_id}"
             html = lb_request(f"?page=users/promised&id={sub_id}")
             if 'page=login' in html:
                 return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
-            # Если передали days — это POST для создания обещанного платежа
+
+            print(f"[promised_payment] sub_id={sub_id} days={days!r} summ={summ!r}")
+            print(f"[promised_payment] html_preview={html[:800]!r}")
+
+            # Парсим ВСЕ поля формы
+            all_inputs = {}
+            for m in re.finditer(r'<input([^>]*)/?>', html, re.IGNORECASE):
+                tag_attrs = m.group(1)
+                name_m = re.search(r'name=["\']([^"\']+)["\']', tag_attrs)
+                val_m = re.search(r'value=["\']([^"\']*)["\']', tag_attrs)
+                type_m = re.search(r'type=["\']([^"\']+)["\']', tag_attrs)
+                if name_m:
+                    all_inputs[name_m.group(1)] = {
+                        "value": val_m.group(1) if val_m else "",
+                        "type": (type_m.group(1).lower() if type_m else "text"),
+                    }
+            # Парсим select-поля
+            all_selects = {}
+            for sel_m in re.finditer(r'<select[^>]*name=["\']([^"\']+)["\'][^>]*>(.*?)</select>', html, re.DOTALL | re.IGNORECASE):
+                sel_name = sel_m.group(1)
+                options_raw = sel_m.group(2)
+                opts = []
+                selected_val = ""
+                for opt in re.finditer(r'<option([^>]*)>([^<]*)', options_raw):
+                    opt_attrs = opt.group(1)
+                    opt_val_m = re.search(r'value=["\']?([^"\'>\s]*)["\']?', opt_attrs)
+                    opt_val = opt_val_m.group(1) if opt_val_m else ""
+                    opt_label = opt.group(2).strip()
+                    is_selected = 'selected' in opt_attrs.lower()
+                    opts.append({"value": opt_val, "label": opt_label, "selected": is_selected})
+                    if is_selected:
+                        selected_val = opt_val
+                all_selects[sel_name] = {"options": opts, "selected": selected_val}
+
+            print(f"[promised_payment] inputs={list(all_inputs.keys())} selects={list(all_selects.keys())}")
+
+            form_action_m = re.search(r'<form[^>]+action=["\']([^"\']*)["\']', html, re.IGNORECASE)
+            form_action = form_action_m.group(1) if form_action_m else ""
+
+            # Текущий активный обещанный платёж
+            current = ""
+            active_m = re.search(r'(\d{2}\.\d{2}\.\d{4})', html)
+            if active_m:
+                current = active_m.group(1)
+            active_summ_m = re.search(r'(\d+[\.,]\d+)\s*(?:руб|₽)', html)
+            if not active_summ_m:
+                active_summ_m = re.search(r'(?:сумма|sum)[^:]*:\s*([^\s<]+)', html, re.IGNORECASE)
+            current_summ = active_summ_m.group(1) if active_summ_m else ""
+
+            # Если передали days — отправляем POST
             if days:
-                # Ищем форму и поля
-                all_inputs = {}
-                for m in re.finditer(r'<input([^>]*)>', html, re.IGNORECASE):
-                    tag_attrs = m.group(1)
-                    name_m = re.search(r'name=["\']([^"\']+)["\']', tag_attrs)
-                    val_m = re.search(r'value=["\']([^"\']*)["\']', tag_attrs)
-                    type_m = re.search(r'type=["\']([^"\']+)["\']', tag_attrs)
-                    if name_m:
-                        all_inputs[name_m.group(1)] = {
-                            "value": val_m.group(1) if val_m else "",
-                            "type": type_m.group(1).lower() if type_m else "text",
-                        }
                 post_fields = {k: v["value"] for k, v in all_inputs.items() if v["type"] == "hidden"}
-                # Поле дней
-                for name in all_inputs:
+                # Подставляем значения select по умолчанию
+                for sel_name, sel_data in all_selects.items():
+                    if sel_data["selected"]:
+                        post_fields[sel_name] = sel_data["selected"]
+                    elif sel_data["options"]:
+                        post_fields[sel_name] = sel_data["options"][0]["value"]
+
+                # Ищем поле для дней
+                days_field = None
+                for name in list(all_inputs.keys()) + list(all_selects.keys()):
                     nl = name.lower()
-                    if any(k in nl for k in ["day", "дн", "period", "срок"]):
-                        post_fields[name] = str(days)
+                    if any(k in nl for k in ["day", "дн", "period", "срок", "count"]):
+                        days_field = name
                         break
+                if days_field:
+                    post_fields[days_field] = str(days)
                 else:
-                    post_fields["days"] = str(days)
+                    # Пробуем первый select если есть
+                    if all_selects:
+                        first_sel = list(all_selects.keys())[0]
+                        post_fields[first_sel] = str(days)
+                    else:
+                        post_fields["days"] = str(days)
+
+                # Поле суммы если требуется
+                if summ:
+                    for name in all_inputs:
+                        nl = name.lower()
+                        if any(k in nl for k in ["sum", "summ", "amount", "сумм"]):
+                            post_fields[name] = str(summ)
+                            break
+                    else:
+                        post_fields["summ"] = str(summ)
+
                 post_fields["id"] = sub_id
-                form_action_m = re.search(r'<form[^>]+action=["\']([^"\']*)["\']', html, re.IGNORECASE)
-                form_action = form_action_m.group(1) if form_action_m else ""
+                # action=save или submit
+                if "action" not in post_fields:
+                    post_fields["action"] = "save"
+
                 if form_action and form_action.startswith("?"):
                     post_url = LB_BASE + form_action
+                elif form_action and form_action.startswith("http"):
+                    post_url = form_action
                 else:
                     post_url = promised_url
+
+                print(f"[promised_payment] POST {post_url} fields={post_fields}")
                 post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
                 req_post = urllib.request.Request(post_url, data=post_data, method="POST")
                 req_post.add_header("Cookie", get_cookies())
-                req_post.add_header("User-Agent", "Mozilla/5.0")
+                req_post.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 req_post.add_header("Content-Type", "application/x-www-form-urlencoded")
                 req_post.add_header("Referer", promised_url)
                 with urllib.request.urlopen(req_post, timeout=15) as resp:
+                    resp_url = resp.geturl()
                     resp_html = resp.read().decode("utf-8", errors="replace")
-                success = 'page=login' not in resp_html
+                print(f"[promised_payment] POST resp_url={resp_url!r} resp_len={len(resp_html)}")
+                print(f"[promised_payment] POST resp_preview={resp_html[:500]!r}")
+                success = 'page=login' not in resp_url and 'error' not in resp_html[:300].lower()
                 return {
                     "statusCode": 200,
                     "headers": cors_headers,
-                    "body": json.dumps({"success": success, "sub_id": sub_id, "days": days}, ensure_ascii=False),
+                    "body": json.dumps({
+                        "success": success,
+                        "sub_id": sub_id,
+                        "days": days,
+                        "debug_post_fields": list(post_fields.keys()),
+                        "debug_resp_url": resp_url,
+                    }, ensure_ascii=False),
                 }
-            # GET: парсим форму — какие опции есть (кол-во дней)
-            options = []
-            select_m = re.search(r'<select[^>]*>(.*?)</select>', html, re.DOTALL | re.IGNORECASE)
-            if select_m:
-                for opt in re.finditer(r'<option[^>]*value=["\']?(\d+)["\']?[^>]*>([^<]+)', select_m.group(1)):
-                    options.append({"value": opt.group(1), "label": opt.group(2).strip()})
-            # Парсим текущий обещанный платёж если есть
-            current = ""
-            date_m = re.search(r'(\d{2}\.\d{2}\.\d{4})', html)
-            if date_m:
-                current = date_m.group(1)
+
+            # GET: возвращаем форму для фронта
+            # Собираем варианты для select (дни)
+            days_options = []
+            summ_options = []
+            for sel_name, sel_data in all_selects.items():
+                nl = sel_name.lower()
+                if any(k in nl for k in ["day", "дн", "period", "count"]):
+                    days_options = sel_data["options"]
+                elif any(k in nl for k in ["sum", "summ", "amount"]):
+                    summ_options = sel_data["options"]
+            # Если дни не нашли через название — берём первый select
+            if not days_options and all_selects:
+                first_sel = list(all_selects.values())[0]
+                days_options = first_sel["options"]
+
+            has_summ_field = any(
+                any(k in n.lower() for k in ["sum", "summ", "amount", "сумм"])
+                for n in list(all_inputs.keys()) + list(all_selects.keys())
+            )
+
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
-                "body": json.dumps({"sub_id": sub_id, "options": options, "current_promised": current}, ensure_ascii=False),
+                "body": json.dumps({
+                    "sub_id": sub_id,
+                    "days_options": days_options,
+                    "summ_options": summ_options,
+                    "has_summ_field": has_summ_field,
+                    "current_promised": current,
+                    "current_summ": current_summ,
+                    "all_fields": list(all_inputs.keys()),
+                    "all_selects": list(all_selects.keys()),
+                }, ensure_ascii=False),
             }
 
         elif action == "lb_payments":
@@ -960,57 +1077,96 @@ def handler(event: dict, context) -> dict:
             sub_id = params.get("id", "")
             if not contract and not sub_id:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "contract или id обязателен"})}
-            # Если только id — сначала получим договор из страницы абонента
             if not contract and sub_id:
                 view_html = lb_request(f"?page=users/view&id={sub_id}")
-                contract_m = re.search(r'договор[^<]*<[^>]+>\s*([^\s<]+)', view_html, re.IGNORECASE)
-                if not contract_m:
-                    contract_m = re.search(r'contract[^<]*<[^>]+>\s*([^\s<]+)', view_html, re.IGNORECASE)
+                # Ищем номер договора в тексте страницы
+                contract_m = re.search(r'(?:договор|contract)[^\d]*(\d[\d\-]+)', view_html, re.IGNORECASE)
                 if contract_m:
                     contract = contract_m.group(1).strip()
+
             pay_html = lb_request(f"?page=payments&operation=search&contract={urllib.parse.quote(contract)}&back=%3Fpage%3Dusers%2Fview%26id%3D{sub_id}")
             if 'page=login' in pay_html:
                 return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
-            # Парсим таблицу платежей
+
+            print(f"[lb_payments] contract={contract!r} pay_html_len={len(pay_html)}")
+
             payments = []
+            # Определяем заголовки таблицы — чтобы знать какая колонка что значит
             table_m = re.search(r'<table[^>]*id=["\']keywords["\'][^>]*>(.*?)</table>', pay_html, re.DOTALL)
             if not table_m:
                 table_m = re.search(r'<table[^>]*>(.*?)</table>', pay_html, re.DOTALL)
             if table_m:
-                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_m.group(1), re.DOTALL)
-                header_done = False
-                for row in rows:
-                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_m.group(1), re.DOTALL)
+                headers = []
+                data_rows = []
+                for i, row in enumerate(all_rows):
+                    th_cells = re.findall(r'<th[^>]*>(.*?)</th>', row, re.DOTALL)
+                    td_cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                    if th_cells and not headers:
+                        headers = [strip_tags(c).strip().lower() for c in th_cells]
+                        print(f"[lb_payments] headers={headers}")
+                    elif td_cells:
+                        data_rows.append(td_cells)
+
+                for cells in data_rows:
                     texts = [strip_tags(c).strip() for c in cells]
-                    texts = [t for t in texts if t]
-                    if not texts:
+                    if not any(texts):
                         continue
-                    if not header_done:
-                        header_done = True
-                        continue
-                    if len(texts) >= 2:
-                        # Ищем дату, сумму, источник
-                        date_val = ""
-                        amount_val = ""
-                        source_val = ""
-                        comment_val = ""
+                    # Если есть заголовки — сопоставляем по позиции
+                    date_val = ""
+                    amount_val = ""
+                    operator_val = ""
+                    comment_val = ""
+                    if headers:
+                        for idx, h in enumerate(headers):
+                            if idx >= len(texts):
+                                break
+                            val = texts[idx]
+                            if not val:
+                                continue
+                            if any(k in h for k in ["дат", "date", "врем", "time"]) and not date_val:
+                                date_val = val
+                            elif any(k in h for k in ["сумм", "sum", "amount", "платёж", "payment"]) and not amount_val:
+                                amount_val = val
+                            elif any(k in h for k in ["оператор", "operator", "кассир", "кто", "менедж", "manager", "user"]) and not operator_val:
+                                operator_val = val
+                            elif any(k in h for k in ["коммент", "comment", "примечан", "note", "описан"]) and not comment_val:
+                                comment_val = val
+                    # Fallback: определяем по содержимому
+                    if not date_val and not amount_val:
                         for t in texts:
+                            if not t:
+                                continue
                             if re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
                                 date_val = t
-                            elif re.match(r'^-?\d+[\.,]?\d*$', t.replace(' ', '')) and not amount_val:
+                            elif re.match(r'^-?\d+[\.,\s]?\d*$', t.replace('\xa0', '').replace(' ', '')) and not amount_val:
                                 amount_val = t
-                            elif not source_val and t and t != date_val and t != amount_val:
-                                source_val = t
-                            elif not comment_val and t and t not in (date_val, amount_val, source_val):
+                            elif not operator_val and t and t not in (date_val, amount_val):
+                                operator_val = t
+                            elif not comment_val and t and t not in (date_val, amount_val, operator_val):
                                 comment_val = t
-                        if date_val or amount_val:
-                            payments.append({
-                                "date": date_val,
-                                "amount": amount_val,
-                                "source": source_val,
-                                "comment": comment_val,
-                                "raw": texts,
-                            })
+
+                    # Нормализуем сумму
+                    amount_clean = amount_val.replace('\xa0', '').replace(' ', '').replace(',', '.') if amount_val else ""
+                    try:
+                        amount_float = float(amount_clean) if amount_clean else None
+                    except:
+                        amount_float = None
+
+                    if amount_val or date_val:
+                        payments.append({
+                            "date": date_val,
+                            "amount": amount_val,
+                            "amount_float": amount_float,
+                            "operator": operator_val,
+                            "comment": comment_val,
+                            "raw": texts,
+                        })
+
+            print(f"[lb_payments] payments_count={len(payments)}")
+            if payments:
+                print(f"[lb_payments] first_payment={payments[0]}")
+
             return {
                 "statusCode": 200,
                 "headers": cors_headers,

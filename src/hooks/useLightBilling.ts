@@ -51,16 +51,24 @@ export interface LBSubscriberTariff {
 export interface LBPaymentHistory {
   date: string;
   amount: string;
-  source: string;
+  amount_float: number | null;
+  operator: string;
   comment: string;
   raw: string[];
 }
 
-export interface LBPromisedInfo {
+export interface LBPromisedFormInfo {
   sub_id: string;
-  options: { value: string; label: string }[];
+  days_options: { value: string; label: string; selected: boolean }[];
+  summ_options: { value: string; label: string; selected: boolean }[];
+  has_summ_field: boolean;
   current_promised: string;
+  current_summ: string;
+  all_fields: string[];
+  all_selects: string[];
 }
+
+
 
 interface UseLBReturn {
   loading: boolean;
@@ -82,8 +90,8 @@ interface UseLBReturn {
   addPayment: (lbId: string, amount: number, comment?: string, contract?: string) => Promise<LBPaymentResult>;
   getSubscriberTariffs: (lbId: string) => Promise<LBSubscriberTariff[]>;
   addTariff: (lbId: string, tariffId: string) => Promise<{ success: boolean }>;
-  getPromisedInfo: (lbId: string) => Promise<LBPromisedInfo | null>;
-  makePromisedPayment: (lbId: string, days: string) => Promise<{ success: boolean }>;
+  getPromisedInfo: (lbId: string) => Promise<LBPromisedFormInfo | null>;
+  makePromisedPayment: (lbId: string, days: string, summ?: string) => Promise<{ success: boolean; debug_resp_url?: string }>;
   getLBPayments: (contract: string, lbId?: string) => Promise<LBPaymentHistory[]>;
 }
 
@@ -201,19 +209,21 @@ export function useLightBilling(): UseLBReturn {
     } catch { return { success: false }; }
   }, []);
 
-  const getPromisedInfo = useCallback(async (lbId: string): Promise<LBPromisedInfo | null> => {
+  const getPromisedInfo = useCallback(async (lbId: string): Promise<LBPromisedFormInfo | null> => {
     try {
       const res = await fetch(`${LB_URL}?action=promised_payment&id=${encodeURIComponent(lbId)}`);
       const data = await res.json();
-      return data as LBPromisedInfo;
+      return data as LBPromisedFormInfo;
     } catch { return null; }
   }, []);
 
-  const makePromisedPayment = useCallback(async (lbId: string, days: string): Promise<{ success: boolean }> => {
+  const makePromisedPayment = useCallback(async (lbId: string, days: string, summ?: string): Promise<{ success: boolean; debug_resp_url?: string }> => {
     try {
-      const res = await fetch(`${LB_URL}?action=promised_payment&id=${encodeURIComponent(lbId)}&days=${encodeURIComponent(days)}`);
+      const params = new URLSearchParams({ action: 'promised_payment', id: lbId, days });
+      if (summ) params.set('summ', summ);
+      const res = await fetch(`${LB_URL}?${params}`);
       const data = await res.json();
-      return { success: data.success ?? false };
+      return { success: data.success ?? false, debug_resp_url: data.debug_resp_url };
     } catch { return { success: false }; }
   }, []);
 
