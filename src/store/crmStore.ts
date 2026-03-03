@@ -109,6 +109,9 @@ interface CRMState {
   addSalarySheet: (sheet: SalarySheet) => void;
   updateSalarySheet: (id: string, data: Partial<SalarySheet>) => void;
   deleteSalarySheet: (id: string) => void;
+
+  appSettings: { promisedPaymentFee: number };
+  updateAppSettings: (data: Partial<{ promisedPaymentFee: number }>) => void;
 }
 
 const INIT_OFFICES: Office[] = [
@@ -245,6 +248,7 @@ export const useCRMStore = create<CRMState>()(
       subscribers: INIT_SUBSCRIBERS,
       events: [],
       salarySheets: [],
+      appSettings: { promisedPaymentFee: 30 },
 
       setCurrentOffice: (id) => set({ currentOfficeId: id }),
 
@@ -342,6 +346,8 @@ export const useCRMStore = create<CRMState>()(
       addSalarySheet: (sheet) => set((s) => ({ salarySheets: [...s.salarySheets, sheet] })),
       updateSalarySheet: (id, data) => set((s) => ({ salarySheets: s.salarySheets.map((sh) => sh.id === id ? { ...sh, ...data } : sh) })),
       deleteSalarySheet: (id) => set((s) => ({ salarySheets: s.salarySheets.filter((sh) => sh.id !== id) })),
+
+      updateAppSettings: (data) => set((s) => ({ appSettings: { ...s.appSettings, ...data } })),
     }),
     { name: 'crm-storage' }
   )

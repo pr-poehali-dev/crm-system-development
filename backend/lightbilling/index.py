@@ -803,45 +803,58 @@ def handler(event: dict, context) -> dict:
             }
 
         elif action == "subscriber_tariffs":
-            # Тарифы абонента со страницы users/view
+            # Тарифы абонента со страницы users/user-tariff (список назначенных тарифов)
             sub_id = params.get("id", "")
             if not sub_id:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id обязателен"})}
-            html = lb_request(f"?page=users/view&id={sub_id}")
-            if 'page=login' in html:
+
+            # Запрашиваем страницу управления тарифами абонента — там есть назначенные тарифы
+            tariff_page_html = lb_request(f"?page=users/user-tariff&id={sub_id}")
+            if 'page=login' in tariff_page_html:
                 return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
 
-            print(f"[subscriber_tariffs] html_len={len(html)}")
+            print(f"[subscriber_tariffs] tariff_page_html_len={len(tariff_page_html)}")
+            print(f"[subscriber_tariffs] preview={tariff_page_html[:1000]!r}")
 
             tariffs_found = []
 
-            # Стратегия 1: ищем строки таблицы содержащие id_tariff= (удаление тарифа)
-            # В LB тарифы абонента обычно в таблице с ссылками ?page=users/user-tariff&id=SUB&id_tariff=T&operation=del
-            rows_with_tariff = re.findall(
-                r'<tr[^>]*>(.*?)</tr>',
-                html, re.DOTALL
-            )
-            for row in rows_with_tariff:
-                if 'id_tariff=' not in row and 'user-tariff' not in row:
+            # Парсим все таблицы на странице
+            # Ищем таблицу с назначенными тарифами — строки с кнопкой удаления (operation=del)
+            all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tariff_page_html, re.DOTALL)
+            for row in all_rows:
+                has_del = 'operation=del' in row or ('id_tariff=' in row and 'del' in row.lower())
+                if not has_del:
                     continue
                 t_id_m = re.search(r'id_tariff=(\d+)', row)
                 t_id = t_id_m.group(1) if t_id_m else ""
                 cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
-                texts = [strip_tags(c).strip() for c in cells]
-                texts = [t for t in texts if t and len(t) > 1]
+                raw_texts = [strip_tags(c).strip() for c in cells]
+                texts = [t for t in raw_texts if t and t not in ('', '-', '×', 'x', 'X')]
+
+                print(f"[subscriber_tariffs] row texts={texts} t_id={t_id!r}")
+
                 if not texts:
                     continue
-                # Первый непустой текст — название тарифа
-                name = texts[0]
-                # Ищем цену — число с возможным знаком
+
+                # Определяем название и цену из ячеек
+                name = ""
                 price = ""
                 date_val = ""
-                for t in texts[1:]:
-                    clean = t.replace(',', '.').replace(' ', '').replace('\xa0', '')
-                    if re.match(r'^-?\d+\.?\d*$', clean) and not price:
+                for t in texts:
+                    clean = t.replace(',', '.').replace(' ', '').replace('\xa0', '').replace('\u2009', '')
+                    # Если похоже на число — это цена
+                    if re.match(r'^-?\d+\.?\d{0,2}$', clean) and not price:
                         price = t
+                    # Если дата
                     elif re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
                         date_val = t
+                    # Иначе — название (берём первый непустой не-числовой текст)
+                    elif not name and not re.match(r'^-?\d+[\.,]?\d*$', clean):
+                        name = t
+
+                if not name and texts:
+                    name = texts[0]
+
                 tariffs_found.append({
                     "id": t_id,
                     "name": name,
@@ -850,30 +863,59 @@ def handler(event: dict, context) -> dict:
                     "raw": texts,
                 })
 
-            # Стратегия 2: ищем блок с заголовком "тариф" и следующую таблицу
+            # Если не нашли через operation=del — ищем строки с id_tariff= в таблице назначенных
             if not tariffs_found:
-                tariff_section_m = re.search(
-                    r'(?:<[^>]+>[^<]*[Тт]ариф[^<]*</[^>]+>)\s*(.*?)\s*(?=<(?:h[2-6]|div\s+class=["\'][^"\']*(?:panel|card|block)))',
-                    html, re.DOTALL
-                )
-                if tariff_section_m:
-                    section = tariff_section_m.group(1)
-                    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', section, re.DOTALL)
-                    for row in rows:
-                        cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
-                        texts = [strip_tags(c).strip() for c in cells]
-                        texts = [t for t in texts if t]
-                        if len(texts) >= 1 and texts[0]:
-                            t_id_m = re.search(r'id_tariff=(\d+)', row)
-                            tariffs_found.append({
-                                "id": t_id_m.group(1) if t_id_m else "",
-                                "name": texts[0],
-                                "price": texts[1] if len(texts) > 1 else "",
-                                "date": texts[2] if len(texts) > 2 else "",
-                                "raw": texts,
-                            })
+                for row in all_rows:
+                    if 'id_tariff=' not in row:
+                        continue
+                    t_id_m = re.search(r'id_tariff=(\d+)', row)
+                    t_id = t_id_m.group(1) if t_id_m else ""
+                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                    texts = [strip_tags(c).strip() for c in cells]
+                    texts = [t for t in texts if t and len(t) > 1]
+                    if not texts:
+                        continue
+                    name = ""
+                    price = ""
+                    date_val = ""
+                    for t in texts:
+                        clean = t.replace(',', '.').replace(' ', '').replace('\xa0', '')
+                        if re.match(r'^-?\d+\.?\d{0,2}$', clean) and not price:
+                            price = t
+                        elif re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
+                            date_val = t
+                        elif not name and not re.match(r'^[\d\.\-]+$', clean):
+                            name = t
+                    if not name and texts:
+                        name = texts[0]
+                    if name or t_id:
+                        tariffs_found.append({"id": t_id, "name": name, "price": price, "date": date_val, "raw": texts})
 
-            print(f"[subscriber_tariffs] found={len(tariffs_found)} tariffs")
+            # Если нашли тарифы, пробуем обогатить их ценой из глобального списка тарифов
+            # (страница ?page=users/user-tariff содержит select со всеми тарифами и их ценами)
+            tariff_prices = {}
+            # Ищем select с тарифами на этой же странице
+            select_m = re.search(r'<select[^>]*name=["\']id_tariff["\'][^>]*>(.*?)</select>', tariff_page_html, re.DOTALL | re.IGNORECASE)
+            if select_m:
+                for opt in re.finditer(r'<option[^>]*value=["\']?(\d+)["\']?[^>]*>([^<]+)', select_m.group(1)):
+                    opt_id = opt.group(1)
+                    opt_label = opt.group(2).strip()
+                    # Пробуем извлечь цену из названия: "Домашний 100 (500 руб)" или "Тариф - 500"
+                    price_m = re.search(r'[\(\-\s]([\d]+(?:[.,]\d+)?)\s*(?:руб|₽|р\.)?[\)\s]', opt_label)
+                    if price_m:
+                        tariff_prices[opt_id] = price_m.group(1)
+                    tariff_prices[f"name_{opt_id}"] = opt_label
+
+            # Обогащаем найденные тарифы именами и ценами из select
+            for t in tariffs_found:
+                tid = t["id"]
+                if tid:
+                    if not t["name"] or t["name"] == tid:
+                        t["name"] = tariff_prices.get(f"name_{tid}", t["name"] or f"Тариф #{tid}")
+                    if not t["price"] and tid in tariff_prices:
+                        t["price"] = tariff_prices[tid]
+
+            print(f"[subscriber_tariffs] final found={len(tariffs_found)}")
             if tariffs_found:
                 print(f"[subscriber_tariffs] first={tariffs_found[0]}")
 
@@ -1137,26 +1179,34 @@ def handler(event: dict, context) -> dict:
                         for t in texts:
                             if not t:
                                 continue
+                            t_clean = re.sub(r'[\s\xa0\u2009\u202f]', '', t).replace(',', '.')
                             if re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
                                 date_val = t
-                            elif re.match(r'^-?\d+[\.,\s]?\d*$', t.replace('\xa0', '').replace(' ', '')) and not amount_val:
+                            elif re.match(r'^-?\d+\.?\d*$', t_clean) and not amount_val:
                                 amount_val = t
                             elif not operator_val and t and t not in (date_val, amount_val):
                                 operator_val = t
                             elif not comment_val and t and t not in (date_val, amount_val, operator_val):
                                 comment_val = t
 
-                    # Нормализуем сумму
-                    amount_clean = amount_val.replace('\xa0', '').replace(' ', '').replace(',', '.') if amount_val else ""
+                    # Нормализуем сумму — убираем все пробелы и неразрывные символы
+                    amount_clean = re.sub(r'[\s\xa0\u2009\u202f]', '', amount_val).replace(',', '.') if amount_val else ""
                     try:
                         amount_float = float(amount_clean) if amount_clean else None
                     except:
                         amount_float = None
 
+                    # Форматируем сумму для отображения
+                    if amount_float is not None:
+                        amount_display = f"{amount_float:,.2f}".replace(',', ' ')
+                    else:
+                        amount_display = amount_val
+
                     if amount_val or date_val:
                         payments.append({
                             "date": date_val,
-                            "amount": amount_val,
+                            "amount": amount_display or amount_val,
+                            "amount_raw": amount_val,
                             "amount_float": amount_float,
                             "operator": operator_val,
                             "comment": comment_val,

@@ -16,7 +16,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function Settings({ onOpenPanel, onClosePanel }: Props) {
-  const { offices, currentOfficeId, addOffice, updateOffice, deleteOffice } = useCRMStore();
+  const { offices, currentOfficeId, addOffice, updateOffice, deleteOffice, appSettings, updateAppSettings } = useCRMStore();
+  const [promisedFee, setPromisedFee] = useState(String(appSettings.promisedPaymentFee));
 
   const openOfficeForm = (office?: Office) => {
     const isNew = !office;
@@ -80,6 +81,38 @@ export default function Settings({ onOpenPanel, onClosePanel }: Props) {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Billing Settings */}
+      <div>
+        <h2 className="text-base font-semibold text-white flex items-center gap-2 mb-4">
+          <Icon name="CreditCard" size={16} className="text-[#3b82f6]" />
+          Настройки биллинга
+        </h2>
+        <div className="bg-[#161b27] border border-[#252d3d] rounded-xl p-4 space-y-4">
+          <Field label="Стоимость обещанного платежа, ₽">
+            <div className="flex gap-2">
+              <input
+                type="number"
+                value={promisedFee}
+                onChange={e => setPromisedFee(e.target.value)}
+                className={inputCls}
+                placeholder="30"
+                min="0"
+              />
+              <button
+                onClick={() => updateAppSettings({ promisedPaymentFee: parseFloat(promisedFee) || 0 })}
+                className="px-4 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm font-medium transition-colors flex-shrink-0"
+              >
+                Сохранить
+              </button>
+            </div>
+            <div className="text-xs text-[#4b5568] mt-1.5">
+              При активации обещанного платежа к сумме добавляется эта комиссия.
+              Формула: (сумма_тарифов / дней_в_месяце × дней_обещ.) + стоимость_обещ.
+            </div>
+          </Field>
         </div>
       </div>
 

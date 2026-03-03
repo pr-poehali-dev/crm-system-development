@@ -134,7 +134,7 @@ function lbToSubscriber(lb: LBSubscriber): Subscriber {
 }
 
 export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: Props) {
-  const { subscribers: localSubs, cashRegisters, cashPayments, currentOfficeId, addCashPayment, updateSubscriber } = useCRMStore();
+  const { subscribers: localSubs, cashRegisters, cashPayments, currentOfficeId, addCashPayment, updateSubscriber, appSettings } = useCRMStore();
   const lb = useLightBilling();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | Subscriber['status']>('all');
@@ -220,6 +220,7 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
         lbId={lbId}
         crmPayments={subPayments}
         lb={lb}
+        promisedPaymentFee={appSettings.promisedPaymentFee}
         onCreateTicket={onCreateTicket ? () => {
           onClosePanel();
           onCreateTicket({ name: sub.fullName, address: sub.address, phone: sub.phone, lbId, contract: sub.contractNumber });
@@ -389,13 +390,14 @@ function InfoRow({ label, value, highlight }: { label: string; value: React.Reac
   );
 }
 
-function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }: {
+function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb, promisedPaymentFee }: {
   sub: Subscriber;
   lbId?: string;
   onCreateTicket?: () => void;
   onTopup?: (suggestedAmount?: number) => void;
   crmPayments: import('@/types/crm').CashPayment[];
   lb: ReturnType<typeof useLightBilling>;
+  promisedPaymentFee: number;
 }) {
   const [lbTariffs, setLbTariffs] = useState<LBSubscriberTariff[]>([]);
   const [lbPayments, setLbPayments] = useState<LBPaymentHistory[]>([]);
@@ -418,19 +420,30 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
     lb.getPromisedInfo(lbId).then(info => {
       if (info) {
         setPromisedForm(info);
-        // Выбираем первый вариант по умолчанию
-        if (info.days_options.length > 0) {
-          const sel = info.days_options.find(o => o.selected) || info.days_options[0];
-          setPromisedDays(sel.value);
-        }
+        const defaultDays = info.days_options.length > 0
+          ? (info.days_options.find(o => o.selected) || info.days_options[0]).value
+          : '7';
+        setPromisedDays(defaultDays);
+        // Автоматически ставим сумму
+        setPromisedSumm(calcPromisedSumm(defaultDays));
       }
     });
   }, [lbId]);
 
   const tariffSum = lbTariffs.reduce((sum, t) => {
-    const price = parseFloat(t.price.replace(/[^\d.]/g, '')) || 0;
-    return sum + price;
+    const clean = t.price.replace(/[\s\xa0\u2009]/g, '').replace(',', '.').replace(/[^\d.]/g, '');
+    return sum + (parseFloat(clean) || 0);
   }, 0);
+
+  // Формула суммы обещанного: (тарифы/дней_в_мес × дней_обещ) + комиссия
+  const calcPromisedSumm = (days: string): string => {
+    const daysNum = parseInt(days) || 0;
+    if (!daysNum || !tariffSum) return String(promisedPaymentFee);
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const result = Math.round((tariffSum / daysInMonth) * daysNum + promisedPaymentFee);
+    return String(result);
+  };
 
   const handlePromised = async () => {
     if (!lbId) return;
@@ -542,37 +555,47 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }:
           </button>
           {showPromised && (
             <div className="mt-3 space-y-2">
-              {/* Количество дней — из опций LB или фиксированные */}
+              {/* Количество дней */}
               <div>
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1 block">Срок</label>
                 {promisedForm && promisedForm.days_options.length > 0 ? (
-                  <select value={promisedDays} onChange={e => setPromisedDays(e.target.value)} className={inputCls + ' cursor-pointer'}>
+                  <select
+                    value={promisedDays}
+                    onChange={e => { setPromisedDays(e.target.value); setPromisedSumm(calcPromisedSumm(e.target.value)); }}
+                    className={inputCls + ' cursor-pointer'}
+                  >
                     {promisedForm.days_options.map(o => (
                       <option key={o.value} value={o.value}>{o.label || `${o.value} дней`}</option>
                     ))}
                   </select>
                 ) : (
-                  <select value={promisedDays} onChange={e => setPromisedDays(e.target.value)} className={inputCls + ' cursor-pointer'}>
+                  <select
+                    value={promisedDays}
+                    onChange={e => { setPromisedDays(e.target.value); setPromisedSumm(calcPromisedSumm(e.target.value)); }}
+                    className={inputCls + ' cursor-pointer'}
+                  >
                     {['3','5','7','10','14','30'].map(d => <option key={d} value={d}>{d} дней</option>)}
                   </select>
                 )}
               </div>
-              {/* Поле суммы если LB требует */}
-              {(promisedForm?.has_summ_field || promisedForm?.summ_options.length) ? (
-                <div>
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1 block">Сумма</label>
-                  {promisedForm.summ_options.length > 0 ? (
-                    <select value={promisedSumm} onChange={e => setPromisedSumm(e.target.value)} className={inputCls + ' cursor-pointer'}>
-                      <option value="">— Выберите —</option>
-                      {promisedForm.summ_options.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input type="number" value={promisedSumm} onChange={e => setPromisedSumm(e.target.value)} className={inputCls} placeholder="Сумма, ₽" />
+              {/* Сумма — всегда показываем, с авто-расчётом */}
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1 block">
+                  Сумма ₽
+                  {tariffSum > 0 && promisedDays && (
+                    <span className="ml-1 normal-case font-normal text-muted-foreground">
+                      ({tariffSum} / {new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate()} дн × {promisedDays} + {promisedPaymentFee} комиссия)
+                    </span>
                   )}
-                </div>
-              ) : null}
+                </label>
+                <input
+                  type="number"
+                  value={promisedSumm}
+                  onChange={e => setPromisedSumm(e.target.value)}
+                  className={inputCls}
+                  placeholder="Сумма, ₽"
+                />
+              </div>
               <button
                 onClick={handlePromised}
                 disabled={promisedLoading || !promisedDays}
