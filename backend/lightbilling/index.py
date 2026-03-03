@@ -803,7 +803,7 @@ def handler(event: dict, context) -> dict:
             }
 
         elif action == "subscriber_tariffs":
-            # Тарифы абонента со страницы users/view — там таблица назначенных тарифов с ценами
+            # Тарифы абонента: раздел "Привязанные тарифы" на странице users/view
             sub_id = params.get("id", "")
             if not sub_id:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id обязателен"})}
@@ -816,14 +816,52 @@ def handler(event: dict, context) -> dict:
 
             tariffs_found = []
 
-            # На странице users/view ищем секцию тарифов
-            # Ищем таблицы на странице — берём ту, что содержит колонки с ценой/стоимостью
-            tables = re.findall(r'<table[^>]*>(.*?)</table>', view_html, re.DOTALL)
-            for table_html in tables:
-                all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL)
+            # Ищем раздел "Привязанные тарифы" (или похожий заголовок h2/h3/div)
+            # Вырезаем HTML от этого заголовка до следующего заголовка того же уровня
+            section_html = ""
+            # Паттерны заголовка раздела тарифов
+            section_patterns = [
+                r'(?:привязанн|прикреплённ|назначенн)[^<]*тариф',
+                r'тариф[^<]*(?:привязанн|прикреплённ|назначенн)',
+                r'user.?tariff',
+                r'тарифный\s+план',
+            ]
+            for pat in section_patterns:
+                m = re.search(pat, view_html, re.IGNORECASE)
+                if m:
+                    # Берём HTML от найденного места до следующего крупного заголовка или конца
+                    start = m.start()
+                    # Ищем следующий заголовок h2/h3 или конец страницы
+                    next_h = re.search(r'<h[23][^>]*>', view_html[start + 10:], re.IGNORECASE)
+                    end = start + 10 + next_h.start() if next_h else len(view_html)
+                    section_html = view_html[start:end]
+                    print(f"[subscriber_tariffs] found section by pattern={pat!r} len={len(section_html)}")
+                    break
+
+            # Если секция не найдена по заголовку — ищем таблицу по ссылке operation=del (управление тарифами)
+            if not section_html:
+                # На странице users/view ссылки удаления тарифа содержат operation=del&id_tariff=
+                del_match = re.search(r'operation=del[^"\']*id_tariff=|id_tariff=[^"\']*operation=del', view_html, re.IGNORECASE)
+                if del_match:
+                    # Найдём таблицу, содержащую эту ссылку
+                    for tm in re.finditer(r'<table[^>]*>(.*?)</table>', view_html, re.DOTALL):
+                        if 'operation=del' in tm.group(1) and 'id_tariff=' in tm.group(1):
+                            section_html = tm.group(0)
+                            print(f"[subscriber_tariffs] found section by operation=del, len={len(section_html)}")
+                            break
+
+            # Если вообще ничего — берём всю страницу (fallback)
+            if not section_html:
+                section_html = view_html
+                print(f"[subscriber_tariffs] fallback: using full page")
+
+            # Парсим все таблицы в найденной секции
+            for tm in re.finditer(r'<table[^>]*>(.*?)</table>', section_html, re.DOTALL):
+                table_inner = tm.group(1)
+                all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_inner, re.DOTALL)
                 if not all_rows:
                     continue
-                # Парсим заголовки
+
                 headers = []
                 data_rows = []
                 for row in all_rows:
@@ -833,79 +871,75 @@ def handler(event: dict, context) -> dict:
                         headers = [strip_tags(c).strip().lower() for c in th_cells]
                     elif td_cells:
                         data_rows.append(td_cells)
+
                 if not data_rows:
                     continue
-                # Проверяем что это таблица тарифов — в заголовках должно быть "тариф", "стоим", "сумм", "price", "name"
-                hdr_str = ' '.join(headers)
-                is_tariff_table = any(k in hdr_str for k in ['тариф', 'tariff', 'стоим', 'price', 'сумм', 'name', 'наим'])
-                if not is_tariff_table:
-                    continue
 
-                print(f"[subscriber_tariffs] tariff table headers={headers}")
+                print(f"[subscriber_tariffs] table headers={headers} rows={len(data_rows)}")
 
-                # Находим индексы нужных колонок
+                # Определяем индексы колонок
                 name_idx = -1
                 price_idx = -1
                 date_idx = -1
                 for i, h in enumerate(headers):
-                    if any(k in h for k in ['тариф', 'tariff', 'наим', 'name', 'услуг']) and name_idx < 0:
+                    if any(k in h for k in ['тариф', 'tariff', 'наим', 'name', 'услуг', 'план']) and name_idx < 0:
                         name_idx = i
-                    if any(k in h for k in ['стоим', 'сумм', 'price', 'amount', 'цена']) and price_idx < 0:
+                    if any(k in h for k in ['стоим', 'сумм', 'price', 'amount', 'цена', 'руб']) and price_idx < 0:
                         price_idx = i
-                    if any(k in h for k in ['дат', 'date', 'период']) and date_idx < 0:
+                    if any(k in h for k in ['дат', 'date', 'период', 'с ', 'по ']) and date_idx < 0:
                         date_idx = i
 
                 for cells in data_rows:
                     texts = [strip_tags(c).strip() for c in cells]
-                    if not any(t for t in texts if len(t) > 1):
+                    non_empty = [t for t in texts if t and len(t) > 0]
+                    if not non_empty:
                         continue
+
+                    # Пропускаем строки-кнопки (только одна ячейка с кнопкой)
+                    if len(non_empty) == 1 and len(non_empty[0]) < 5:
+                        continue
+
                     name = texts[name_idx] if name_idx >= 0 and name_idx < len(texts) else ""
                     price = texts[price_idx] if price_idx >= 0 and price_idx < len(texts) else ""
                     date_val = texts[date_idx] if date_idx >= 0 and date_idx < len(texts) else ""
+
+                    # Если индексы не определены — угадываем по содержимому
+                    if not name and not price:
+                        for t in texts:
+                            if not t:
+                                continue
+                            t_clean = re.sub(r'[\s\xa0\u2009\u202f]', '', t).replace(',', '.')
+                            if re.match(r'^\d{2}\.\d{2}\.\d{4}', t) and not date_val:
+                                date_val = t
+                            elif re.match(r'^\d+\.?\d{0,2}$', t_clean) and float(t_clean) > 50 and not price:
+                                price = t
+                            elif not name and len(t) > 2 and not re.match(r'^\d+$', t):
+                                name = t
+
                     if not name:
-                        # берём первый непустой текст как имя
-                        name = next((t for t in texts if t and not re.match(r'^\d+[\.,]?\d*$', t.replace('\xa0','').replace('\u2009','').replace(' ',''))), "")
+                        continue
+
                     # Нормализуем цену
+                    price_display = ""
                     if price:
                         price_clean = re.sub(r'[\s\xa0\u2009\u202f]', '', price).replace(',', '.')
                         price_clean = re.sub(r'[^\d.]', '', price_clean)
-                        if price_clean:
-                            try:
-                                price = str(float(price_clean))
-                            except:
-                                pass
+                        try:
+                            price_display = str(int(float(price_clean))) if price_clean else ""
+                        except:
+                            price_display = price
+
                     tariffs_found.append({
                         "id": "",
                         "name": name,
-                        "price": price,
+                        "price": price_display,
                         "date": date_val,
                         "raw": texts,
                     })
 
-            # Если таблица не нашлась по заголовкам — fallback: ищем строки с ценами рядом с тарифом
-            if not tariffs_found:
-                # Ищем паттерн: тариф + цена в тексте страницы
-                # Паттерн вида: <td>Название тарифа</td><td>500.00</td>
-                all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', view_html, re.DOTALL)
-                for row in all_rows:
-                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
-                    texts = [strip_tags(c).strip() for c in cells]
-                    texts = [t for t in texts if t]
-                    if len(texts) < 2:
-                        continue
-                    # Ищем строки где есть текст + число (цена)
-                    has_price = False
-                    price_val = ""
-                    name_val = ""
-                    for t in texts:
-                        c = re.sub(r'[\s\xa0\u2009]', '', t).replace(',', '.')
-                        if re.match(r'^\d{3,}\.?\d{0,2}$', c) and not has_price:
-                            has_price = True
-                            price_val = t
-                        elif not name_val and not re.match(r'^\d+', t) and len(t) > 3:
-                            name_val = t
-                    if has_price and name_val:
-                        tariffs_found.append({"id": "", "name": name_val, "price": price_val, "date": "", "raw": texts})
+                # Если нашли тарифы в этой таблице — выходим
+                if tariffs_found:
+                    break
 
             print(f"[subscriber_tariffs] final found={len(tariffs_found)}")
             if tariffs_found:
