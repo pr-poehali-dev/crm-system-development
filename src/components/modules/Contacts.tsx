@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useCRMStore } from '@/store/crmStore';
 import { Subscriber, CashRegister } from '@/types/crm';
 import Icon from '@/components/ui/icon';
-import { useLightBilling, LBSubscriber } from '@/hooks/useLightBilling';
+import { useLightBilling, LBSubscriber, LBSubscriberTariff, LBPaymentHistory } from '@/hooks/useLightBilling';
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 const inputCls = "w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors";
@@ -21,13 +21,14 @@ interface TopupFormProps {
   sub: Subscriber;
   lbId?: string;
   registers: CashRegister[];
+  suggestedAmount?: number;
   onSave: (cashRegisterId: string, amount: number) => Promise<boolean | undefined>;
   onCancel: () => void;
 }
 
-function TopupForm({ sub, lbId, registers, onSave, onCancel }: TopupFormProps) {
+function TopupForm({ sub, lbId, registers, suggestedAmount, onSave, onCancel }: TopupFormProps) {
   const [cashRegisterId, setCashRegisterId] = useState(registers[0]?.id || '');
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(suggestedAmount ? String(suggestedAmount) : '');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; lbOk?: boolean; msg?: string } | null>(null);
   const presets = [100, 200, 300, 500, 1000];
@@ -85,6 +86,11 @@ function TopupForm({ sub, lbId, registers, onSave, onCancel }: TopupFormProps) {
       <div><label className="block text-xs font-medium text-muted-foreground mb-1.5">Сумма пополнения, ₽</label>
         <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} placeholder="0" min="0" />
         <div className="flex gap-2 mt-2 flex-wrap">
+          {suggestedAmount && (
+            <button onClick={() => setAmount(String(suggestedAmount))} className="px-3 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 rounded-lg text-xs text-emerald-400 font-medium transition-colors">
+              {suggestedAmount} ₽ (по тарифу)
+            </button>
+          )}
           {presets.map((p) => (
             <button key={p} onClick={() => setAmount(String(p))} className="px-3 py-1 bg-muted hover:bg-accent rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors">{p} ₽</button>
           ))}
@@ -164,12 +170,13 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
   const offRegisters = cashRegisters.filter((r) => r.officeId === currentOfficeId);
   const todayStr = new Date().toISOString().split('T')[0];
 
-  const openTopup = (sub: Subscriber, lbId?: string) => {
+  const openTopup = (sub: Subscriber, lbId?: string, suggestedAmount?: number) => {
     onOpenPanel(`Пополнение: ${sub.fullName}`, (
       <TopupForm
         sub={sub}
         lbId={lbId}
         registers={offRegisters}
+        suggestedAmount={suggestedAmount}
         onSave={async (cashRegisterId, amount) => {
           let lbOk: boolean | undefined;
           if (lbId) {
@@ -205,17 +212,19 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
 
   const openCard = (sub: Subscriber) => {
     const lbSub = lb.subscribers.find((s) => (s.id || s.lb_id) === sub.id);
+    const lbId = lbSub?.lb_id;
     const subPayments = cashPayments.filter((p) => p.subscriberId === sub.id && p.type === 'subscriber_payment');
     onOpenPanel(sub.fullName, (
       <SubscriberCard
         sub={sub}
-        lbId={lbSub?.lb_id}
-        payments={subPayments}
+        lbId={lbId}
+        crmPayments={subPayments}
+        lb={lb}
         onCreateTicket={onCreateTicket ? () => {
           onClosePanel();
-          onCreateTicket({ name: sub.fullName, address: sub.address, phone: sub.phone, lbId: lbSub?.lb_id, contract: sub.contractNumber });
+          onCreateTicket({ name: sub.fullName, address: sub.address, phone: sub.phone, lbId, contract: sub.contractNumber });
         } : undefined}
-        onTopup={() => openTopup(sub, lbSub?.lb_id)}
+        onTopup={(suggestedAmount) => openTopup(sub, lbId, suggestedAmount)}
       />
     ));
   };
@@ -380,9 +389,54 @@ function InfoRow({ label, value, highlight }: { label: string; value: React.Reac
   );
 }
 
-function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, payments }: { sub: Subscriber; lbId?: string; onCreateTicket?: () => void; onTopup?: () => void; payments: import('@/types/crm').CashPayment[] }) {
+function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb }: {
+  sub: Subscriber;
+  lbId?: string;
+  onCreateTicket?: () => void;
+  onTopup?: (suggestedAmount?: number) => void;
+  crmPayments: import('@/types/crm').CashPayment[];
+  lb: ReturnType<typeof useLightBilling>;
+}) {
+  const [lbTariffs, setLbTariffs] = useState<LBSubscriberTariff[]>([]);
+  const [lbPayments, setLbPayments] = useState<LBPaymentHistory[]>([]);
+  const [loadingTariffs, setLoadingTariffs] = useState(false);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [promisedLoading, setPromisedLoading] = useState(false);
+  const [promisedDays, setPromisedDays] = useState('7');
+  const [promisedResult, setPromisedResult] = useState('');
+  const [showPromised, setShowPromised] = useState(false);
+
+  useEffect(() => {
+    if (!lbId) return;
+    setLoadingTariffs(true);
+    lb.getSubscriberTariffs(lbId).then(t => { setLbTariffs(t); setLoadingTariffs(false); });
+    setLoadingPayments(true);
+    lb.getLBPayments(sub.contractNumber, lbId).then(p => { setLbPayments(p); setLoadingPayments(false); });
+  }, [lbId]);
+
+  const tariffSum = lbTariffs.reduce((sum, t) => {
+    const price = parseFloat(t.price.replace(/[^\d.]/g, '')) || 0;
+    return sum + price;
+  }, 0);
+
+  const handlePromised = async () => {
+    if (!lbId) return;
+    setPromisedLoading(true);
+    setPromisedResult('');
+    const res = await lb.makePromisedPayment(lbId, promisedDays);
+    setPromisedLoading(false);
+    setPromisedResult(res.success ? '✓ Обещанный платёж активирован' : 'Ошибка активации');
+  };
+
+  // Объединяем историю: LB + CRM (дедупликация по сумме+дате не нужна — показываем все)
+  const allPayments = [
+    ...lbPayments.map(p => ({ date: p.date, amount: p.amount, source: p.source || 'LightBilling', comment: p.comment, fromLB: true })),
+    ...crmPayments.slice().reverse().map(p => ({ date: new Date(p.date).toLocaleDateString('ru-RU'), amount: String(p.amount), source: 'CRM', comment: p.comment || '', fromLB: false })),
+  ];
+
   return (
     <div className="space-y-4">
+      {/* Шапка */}
       <div className="flex items-center gap-3 pb-4 border-b border-border">
         <div className="w-14 h-14 rounded-full bg-primary/20 flex items-center justify-center text-xl font-bold text-primary">
           {sub.fullName.split(' ').map((n) => n[0]).slice(0, 2).join('')}
@@ -396,35 +450,95 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, payments }: { sub:
         </div>
       </div>
 
+      {/* Баланс */}
       <div className={`rounded-xl p-4 text-center ${sub.balance >= 0 ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
         <div className="text-xs text-muted-foreground mb-1">Баланс</div>
         <div className={`text-3xl font-bold ${sub.balance >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
           {sub.balance >= 0 ? '+' : ''}{sub.balance.toLocaleString('ru-RU')} ₽
         </div>
+        {tariffSum > 0 && (
+          <div className="text-xs text-muted-foreground mt-1">Сумма тарифов: {tariffSum.toLocaleString('ru-RU')} ₽/мес</div>
+        )}
         <button
-          onClick={onTopup}
+          onClick={() => onTopup?.(tariffSum > 0 ? tariffSum : undefined)}
           className="mt-3 flex items-center justify-center gap-2 w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition-colors"
         >
-          <Icon name="Plus" size={14} />Пополнить баланс
+          <Icon name="Plus" size={14} />Пополнить баланс{tariffSum > 0 ? ` (${tariffSum} ₽)` : ''}
         </button>
       </div>
 
+      {/* Контакты */}
       <div className="bg-muted/50 border border-border rounded-xl px-4 py-2">
         <InfoRow label="Телефон" value={sub.phone} highlight />
         {sub.email && <InfoRow label="Email" value={sub.email} />}
         <InfoRow label="Адрес" value={sub.address} highlight />
-        {sub.tariff && <InfoRow label="Тариф" value={sub.tariff} />}
         {sub.connectDate && <InfoRow label="Дата подключения" value={new Date(sub.connectDate).toLocaleDateString('ru-RU')} />}
         {sub.ipAddress && <InfoRow label="IP-адрес" value={<span className="font-mono text-xs">{sub.ipAddress}</span>} />}
       </div>
 
+      {/* Тарифы из LB */}
+      <div>
+        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-2">
+          <Icon name="Zap" size={12} className="text-primary" />Тарифы LightBilling
+          {loadingTariffs && <Icon name="Loader" size={11} className="animate-spin text-muted-foreground" />}
+        </div>
+        {!lbId ? (
+          <div className="text-xs text-muted-foreground py-2">Абонент не связан с LightBilling</div>
+        ) : lbTariffs.length === 0 && !loadingTariffs ? (
+          <div className="text-xs text-muted-foreground py-2">Тарифы не найдены</div>
+        ) : (
+          <div className="bg-muted/50 border border-border rounded-xl overflow-hidden">
+            {lbTariffs.map((t, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-2 border-b border-border last:border-0">
+                <div>
+                  <div className="text-xs text-foreground font-medium">{t.name}</div>
+                  {t.date && <div className="text-[10px] text-muted-foreground">{t.date}</div>}
+                </div>
+                {t.price && <div className="text-xs font-semibold text-emerald-400">{t.price} ₽</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Обещанный платёж */}
       {lbId && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted border border-border rounded-xl px-3 py-2">
-          <Icon name="Zap" size={12} className="text-primary" />
-          <span>LightBilling · ID: <span className="text-foreground font-mono">{lbId}</span></span>
+        <div className="bg-muted/50 border border-border rounded-xl p-3">
+          <button
+            onClick={() => setShowPromised(v => !v)}
+            className="flex items-center justify-between w-full"
+          >
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+              <Icon name="Clock" size={12} className="text-[#f59e0b]" />Обещанный платёж
+            </span>
+            <Icon name={showPromised ? 'ChevronUp' : 'ChevronDown'} size={14} className="text-muted-foreground" />
+          </button>
+          {showPromised && (
+            <div className="mt-3 space-y-2">
+              <div className="flex gap-2">
+                <select value={promisedDays} onChange={e => setPromisedDays(e.target.value)} className={inputCls + ' cursor-pointer flex-1'}>
+                  {['3','5','7','10','14','30'].map(d => <option key={d} value={d}>{d} дней</option>)}
+                </select>
+                <button
+                  onClick={handlePromised}
+                  disabled={promisedLoading}
+                  className="px-4 py-2 bg-[#f59e0b] hover:bg-[#d97706] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex-shrink-0 flex items-center gap-1.5"
+                >
+                  {promisedLoading ? <Icon name="Loader" size={13} className="animate-spin" /> : <Icon name="Clock" size={13} />}
+                  Активировать
+                </button>
+              </div>
+              {promisedResult && (
+                <div className={`text-xs px-3 py-2 rounded-lg ${promisedResult.startsWith('✓') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                  {promisedResult}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
+      {/* Кнопки */}
       <div className="grid grid-cols-2 gap-2">
         <button className="flex items-center justify-center gap-2 py-2 bg-muted hover:bg-accent text-muted-foreground hover:text-foreground rounded-lg text-xs transition-colors">
           <Icon name="Phone" size={13} />Позвонить
@@ -445,30 +559,35 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, payments }: { sub:
         )}
       </div>
 
-      {payments.length > 0 && (
-        <div>
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">История пополнений</div>
+      {/* История пополнений */}
+      <div>
+        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-2">
+          История пополнений
+          {loadingPayments && <Icon name="Loader" size={11} className="animate-spin text-muted-foreground" />}
+        </div>
+        {allPayments.length === 0 && !loadingPayments ? (
+          <div className="text-center text-xs text-muted-foreground py-3">История пополнений пуста</div>
+        ) : (
           <div className="bg-muted/50 border border-border rounded-xl overflow-hidden">
-            {payments.slice().reverse().map((p) => (
-              <div key={p.id} className="flex items-center justify-between px-3 py-2.5 border-b border-border last:border-0">
+            {allPayments.slice(0, 20).map((p, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-2.5 border-b border-border last:border-0">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
-                    <Icon name="ArrowDownLeft" size={11} className="text-emerald-500" />
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${p.fromLB ? 'bg-[#3b82f6]/20' : 'bg-emerald-500/20'}`}>
+                    <Icon name={p.fromLB ? 'Zap' : 'ArrowDownLeft'} size={11} className={p.fromLB ? 'text-[#3b82f6]' : 'text-emerald-500'} />
                   </div>
                   <div>
-                    <div className="text-xs text-foreground">{new Date(p.date).toLocaleDateString('ru-RU')}</div>
-                    {p.comment && <div className="text-xs text-muted-foreground">{p.comment}</div>}
+                    <div className="text-xs text-foreground">{p.date}</div>
+                    <div className="text-[10px] text-muted-foreground">{p.source}{p.comment ? ` · ${p.comment}` : ''}</div>
                   </div>
                 </div>
-                <div className="text-sm font-bold text-emerald-500">+{p.amount.toLocaleString('ru-RU')} ₽</div>
+                <div className={`text-sm font-bold ${parseFloat(p.amount) < 0 ? 'text-red-400' : 'text-emerald-500'}`}>
+                  {parseFloat(p.amount) >= 0 ? '+' : ''}{p.amount} ₽
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
-      {payments.length === 0 && (
-        <div className="text-center text-xs text-muted-foreground py-3">История пополнений пуста</div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

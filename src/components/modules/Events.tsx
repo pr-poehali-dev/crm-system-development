@@ -262,8 +262,10 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
   const [problem, setProblem] = useState(event?.problem || '');
   const [amount, setAmount] = useState(String(event?.amount || ''));
   const [notes, setNotes] = useState(event?.notes || '');
-  const [tariffId, setTariffId] = useState(event?.tariffId || '');
-  const [tariffName, setTariffName] = useState(event?.tariffName || '');
+  const [tariffId, setTariffId] = useState('');
+  const [selectedTariffs, setSelectedTariffs] = useState<{ id: string; name: string }[]>(
+    event?.tariffs || (event?.tariffId ? [{ id: event.tariffId, name: event.tariffName || '' }] : [])
+  );
 
   // Абонент
   const [subSearch, setSubSearch] = useState(event?.subscriberName || prefill?.name || '');
@@ -332,24 +334,27 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
     setShowSuggestions(false);
   };
 
-  const handleTariffChange = (id: string) => {
-    setTariffId(id);
-    const t = tariffs.find((t) => t.id === id);
-    setTariffName(t?.name || '');
+  const handleAddTariff = (id: string) => {
+    if (!id || selectedTariffs.find(t => t.id === id)) return;
+    const t = tariffs.find(t => t.id === id);
+    if (t) setSelectedTariffs(prev => [...prev, { id: t.id, name: t.name }]);
+    setTariffId('');
   };
+  const handleRemoveTariff = (id: string) => setSelectedTariffs(prev => prev.filter(t => t.id !== id));
 
   const handleCreateSubscriber = async () => {
-    if (!newSubName || !newSubAddress || !tariffId || !newSubGroup) {
-      setCreateResult('Заполните ФИО, адрес, тариф и группу');
+    if (!newSubName || !newSubAddress || !newSubGroup) {
+      setCreateResult('Заполните ФИО, адрес и группу');
       return;
     }
     setCreateLoading(true);
     setCreateResult('');
+    const firstTariff = selectedTariffs[0];
     const result = await lb.createSubscriber({
       fullName: newSubName,
       address: newSubAddress,
       phone: newSubPhone,
-      tariffId,
+      tariffId: firstTariff?.id || '',
       contractNumber: newSubContract,
       login: newSubLogin,
       password: newSubPassword,
@@ -357,12 +362,18 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
     });
     setCreateLoading(false);
     if (result.success) {
+      const newLbId = result.lb_id || '';
       setSubName(newSubName);
       setSubSearch(newSubName);
       setSubAddress(newSubAddress);
       setSubPhone(newSubPhone);
-      setSubLbId(result.lb_id);
-      setCreateResult(`✓ Абонент создан в LightBilling${result.lb_id ? ` (ID: ${result.lb_id})` : ''}`);
+      setSubLbId(newLbId);
+      setCreateResult(`✓ Абонент создан в LightBilling${newLbId ? ` (ID: ${newLbId})` : ''}`);
+      if (newLbId && selectedTariffs.length > 1) {
+        for (const t of selectedTariffs.slice(1)) {
+          await lb.addTariff(newLbId, t.id);
+        }
+      }
     } else {
       setCreateResult(`Ошибка: ${result.message}`);
     }
@@ -380,8 +391,9 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
       subscriberContract: subContract,
       problem: type !== 'connection' ? problem : undefined,
       amount: type === 'paid_call' ? Number(amount) : undefined,
-      tariffId: type === 'connection' ? tariffId : undefined,
-      tariffName: type === 'connection' ? tariffName : undefined,
+      tariffId: type === 'connection' ? (selectedTariffs[0]?.id || '') : undefined,
+      tariffName: type === 'connection' ? (selectedTariffs[0]?.name || '') : undefined,
+      tariffs: type === 'connection' ? selectedTariffs : undefined,
       notes,
     });
   };
@@ -495,21 +507,36 @@ function EventForm({ event, prefill, employees, onSave, onCancel, onDelete }: Ev
             <input value={newSubPhone} onChange={(e) => setNewSubPhone(e.target.value)} className={inputCls} placeholder="+7..." />
           </div>
           <div>
-            <label className={labelCls}>Тариф *</label>
+            <label className={labelCls}>Тарифы</label>
+            {selectedTariffs.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {selectedTariffs.map(t => (
+                  <span key={t.id} className="flex items-center gap-1 px-2 py-1 bg-[#10b981]/10 border border-[#10b981]/30 text-[#10b981] text-xs rounded-lg">
+                    {t.name}
+                    <button onClick={() => handleRemoveTariff(t.id)} className="hover:text-white transition-colors ml-0.5"><Icon name="X" size={10} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
             {!tariffsLoaded ? (
               <div className="flex items-center gap-2 text-xs text-[#4b5568] py-2">
                 <Icon name="Loader" size={12} className="animate-spin" />Загрузка тарифов...
               </div>
             ) : (
-              <select value={tariffId} onChange={(e) => handleTariffChange(e.target.value)} className={selectCls}>
-                <option value="">— Выберите тариф —</option>
-                {tariffs.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              <div className="flex gap-2">
+                <select value={tariffId} onChange={(e) => setTariffId(e.target.value)} className={selectCls + ' flex-1'}>
+                  <option value="">— Добавить тариф —</option>
+                  {tariffs.filter(t => !selectedTariffs.find(s => s.id === t.id)).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <button onClick={() => handleAddTariff(tariffId)} disabled={!tariffId} className="px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-40 text-white rounded-lg text-sm transition-colors flex-shrink-0">
+                  <Icon name="Plus" size={14} />
+                </button>
+              </div>
             )}
           </div>
           <button
             onClick={handleCreateSubscriber}
-            disabled={createLoading || !newSubName || !newSubAddress || !tariffId || !newSubGroup}
+            disabled={createLoading || !newSubName || !newSubAddress || !newSubGroup}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
           >
             {createLoading

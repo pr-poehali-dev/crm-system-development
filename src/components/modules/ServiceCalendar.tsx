@@ -462,10 +462,10 @@ function ConnectionForm({ date, slot, event, employees, onSave, onDelete, onCanc
   const [technicianId, setTechnicianId] = useState(event?.technicianId || '');
   const [status, setStatus] = useState<CRMEvent['status']>(event?.status || 'new');
   const [notes, setNotes] = useState(event?.notes || '');
-  const [tariffId, setTariffId] = useState(event?.tariffId || '');
-  const [tariffName, setTariffName] = useState(event?.tariffName || '');
+  const [tariffId, setTariffId] = useState('');
   const [tariffs, setTariffs] = useState<LBTariff[]>([]);
   const [tariffsLoaded, setTariffsLoaded] = useState(false);
+  const [selectedTariffs, setSelectedTariffs] = useState<{ id: string; name: string }[]>(event?.tariffs || (event?.tariffId ? [{ id: event.tariffId, name: event.tariffName || '' }] : []));
   const [newSubGroup, setNewSubGroup] = useState('Физические лица');
   const [newSubContract, setNewSubContract] = useState('');
   const [newSubLogin, setNewSubLogin] = useState('');
@@ -478,20 +478,24 @@ function ConnectionForm({ date, slot, event, employees, onSave, onDelete, onCanc
     lb.loadTariffs().then(list => { setTariffs(list); setTariffsLoaded(true); });
   });
 
-  const handleTariffChange = (id: string) => {
-    setTariffId(id);
-    setTariffName(tariffs.find(t => t.id === id)?.name || '');
+  const handleAddTariff = (id: string) => {
+    if (!id || selectedTariffs.find(t => t.id === id)) return;
+    const t = tariffs.find(t => t.id === id);
+    if (t) setSelectedTariffs(prev => [...prev, { id: t.id, name: t.name }]);
+    setTariffId('');
   };
+  const handleRemoveTariff = (id: string) => setSelectedTariffs(prev => prev.filter(t => t.id !== id));
 
   const handleCreateSubscriber = async () => {
-    if (!name || !address || !tariffId) {
-      setCreateResult('Заполните ФИО, адрес и тариф');
+    if (!name || !address) {
+      setCreateResult('Заполните ФИО и адрес');
       return;
     }
     setCreateLoading(true);
     setCreateResult('');
+    const firstTariff = selectedTariffs[0];
     const result = await lb.createSubscriber({
-      fullName: name, address, phone, tariffId,
+      fullName: name, address, phone, tariffId: firstTariff?.id || '',
       contractNumber: newSubContract,
       login: newSubLogin,
       password: newSubPassword,
@@ -499,8 +503,15 @@ function ConnectionForm({ date, slot, event, employees, onSave, onDelete, onCanc
     });
     setCreateLoading(false);
     if (result.success) {
-      setSubLbId(result.lb_id || '');
-      setCreateResult(`✓ Создан в LightBilling${result.lb_id ? ` (ID: ${result.lb_id})` : ''}`);
+      const newLbId = result.lb_id || '';
+      setSubLbId(newLbId);
+      setCreateResult(`✓ Создан в LightBilling${newLbId ? ` (ID: ${newLbId})` : ''}`);
+      // Назначаем дополнительные тарифы (со второго)
+      if (newLbId && selectedTariffs.length > 1) {
+        for (const t of selectedTariffs.slice(1)) {
+          await lb.addTariff(newLbId, t.id);
+        }
+      }
     } else {
       setCreateResult(`Ошибка: ${result.message}`);
     }
@@ -519,8 +530,9 @@ function ConnectionForm({ date, slot, event, employees, onSave, onDelete, onCanc
       technicianId,
       date,
       timeSlot: slot.time,
-      tariffId,
-      tariffName,
+      tariffId: selectedTariffs[0]?.id || '',
+      tariffName: selectedTariffs[0]?.name || '',
+      tariffs: selectedTariffs,
       notes,
     });
   };
@@ -575,18 +587,35 @@ function ConnectionForm({ date, slot, event, employees, onSave, onDelete, onCanc
         </div>
       </div>
 
-      {/* Тариф */}
+      {/* Тарифы */}
       <div>
-        <label className={labelCls}>Тариф *</label>
+        <label className={labelCls}>Тарифы</label>
+        {selectedTariffs.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {selectedTariffs.map(t => (
+              <span key={t.id} className="flex items-center gap-1 px-2 py-1 bg-[#10b981]/10 border border-[#10b981]/30 text-[#10b981] text-xs rounded-lg">
+                {t.name}
+                <button onClick={() => handleRemoveTariff(t.id)} className="hover:text-white transition-colors ml-0.5">
+                  <Icon name="X" size={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {!tariffsLoaded ? (
           <div className="flex items-center gap-2 text-xs text-[#4b5568] py-2">
             <Icon name="Loader" size={12} className="animate-spin" />Загрузка тарифов...
           </div>
         ) : (
-          <select value={tariffId} onChange={e => handleTariffChange(e.target.value)} className={inputCls + ' cursor-pointer'}>
-            <option value="">— Выберите тариф —</option>
-            {tariffs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          <div className="flex gap-2">
+            <select value={tariffId} onChange={e => setTariffId(e.target.value)} className={inputCls + ' cursor-pointer flex-1'}>
+              <option value="">— Добавить тариф —</option>
+              {tariffs.filter(t => !selectedTariffs.find(s => s.id === t.id)).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <button onClick={() => handleAddTariff(tariffId)} disabled={!tariffId} className="px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-40 text-white rounded-lg text-sm transition-colors flex-shrink-0">
+              <Icon name="Plus" size={14} />
+            </button>
+          </div>
         )}
       </div>
 
@@ -595,7 +624,7 @@ function ConnectionForm({ date, slot, event, employees, onSave, onDelete, onCanc
         <>
           <button
             onClick={handleCreateSubscriber}
-            disabled={createLoading || !name || !address || !tariffId}
+            disabled={createLoading || !name || !address}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
           >
             {createLoading

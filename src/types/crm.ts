@@ -73,6 +73,7 @@ export interface CRMEvent {
   amount?: number;
   tariffId?: string;
   tariffName?: string;
+  tariffs?: { id: string; name: string }[];
   newLbId?: string;
   notes: string;
   createdAt: string;

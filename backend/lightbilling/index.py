@@ -802,6 +802,221 @@ def handler(event: dict, context) -> dict:
                 }, ensure_ascii=False),
             }
 
+        elif action == "subscriber_tariffs":
+            # Тарифы абонента со страницы users/view
+            sub_id = params.get("id", "")
+            if not sub_id:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id обязателен"})}
+            html = lb_request(f"?page=users/view&id={sub_id}")
+            if 'page=login' in html:
+                return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
+            # Парсим таблицу тарифов — ищем блок с тарифами (table с тарифами)
+            tariffs_found = []
+            # Ищем таблицу тарифов (обычно содержит колонки Тариф/Цена/Дата)
+            tariff_table_m = re.search(
+                r'(?:тариф|tariff)[^<]*</[^>]+>.*?<table[^>]*>(.*?)</table>',
+                html, re.DOTALL | re.IGNORECASE
+            )
+            if not tariff_table_m:
+                # Ищем все таблицы после h2/h3 содержащего "тариф"
+                tariff_section = re.search(
+                    r'<(?:h[2-4]|div)[^>]*>[^<]*[Тт]ариф[^<]*</(?:h[2-4]|div)>(.*?)<(?:h[2-4]|div)',
+                    html, re.DOTALL
+                )
+                if tariff_section:
+                    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tariff_section.group(1), re.DOTALL)
+                    for row in rows:
+                        cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                        texts = [strip_tags(c).strip() for c in cells]
+                        texts = [t for t in texts if t]
+                        if len(texts) >= 2:
+                            # Ищем id тарифа в ссылках
+                            t_id_m = re.search(r'id_tariff=(\d+)', row)
+                            t_id = t_id_m.group(1) if t_id_m else ""
+                            tariffs_found.append({
+                                "id": t_id,
+                                "name": texts[0],
+                                "price": texts[1] if len(texts) > 1 else "",
+                                "date": texts[2] if len(texts) > 2 else "",
+                            })
+            else:
+                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tariff_table_m.group(1), re.DOTALL)
+                for row in rows:
+                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                    texts = [strip_tags(c).strip() for c in cells]
+                    texts = [t for t in texts if t]
+                    if len(texts) >= 1:
+                        t_id_m = re.search(r'id_tariff=(\d+)', row)
+                        t_id = t_id_m.group(1) if t_id_m else ""
+                        tariffs_found.append({
+                            "id": t_id,
+                            "name": texts[0],
+                            "price": texts[1] if len(texts) > 1 else "",
+                            "date": texts[2] if len(texts) > 2 else "",
+                        })
+            # Fallback: ищем все упоминания тарифов через паттерн id_tariff=
+            if not tariffs_found:
+                for m in re.finditer(r'id_tariff=(\d+)[^>]*>([^<]{1,80})', html):
+                    tariffs_found.append({"id": m.group(1), "name": m.group(2).strip(), "price": "", "date": ""})
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({"tariffs": tariffs_found, "sub_id": sub_id}, ensure_ascii=False),
+            }
+
+        elif action == "add_tariff":
+            # Добавить тариф абоненту: GET ?page=users/user-tariff&id=SUB_ID&id_tariff=TARIFF_ID&operation=add
+            sub_id = params.get("id", "")
+            tariff_id_val = params.get("tariff_id", "")
+            if not sub_id or not tariff_id_val:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id и tariff_id обязательны"})}
+            tariff_url = LB_BASE + f"?page=users/user-tariff&id={sub_id}&id_tariff={tariff_id_val}&operation=add"
+            req_t = urllib.request.Request(tariff_url)
+            req_t.add_header("Cookie", get_cookies())
+            req_t.add_header("User-Agent", "Mozilla/5.0")
+            req_t.add_header("Referer", LB_BASE + f"?page=users/view&id={sub_id}")
+            with urllib.request.urlopen(req_t, timeout=10) as r:
+                r.read()
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({"success": True, "sub_id": sub_id, "tariff_id": tariff_id_val}, ensure_ascii=False),
+            }
+
+        elif action == "promised_payment":
+            # Обещанный платёж: GET ?page=users/promised&id=SUB_ID
+            sub_id = params.get("id", "")
+            days = params.get("days", "")
+            if not sub_id:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id обязателен"})}
+            promised_url = LB_BASE + f"?page=users/promised&id={sub_id}"
+            html = lb_request(f"?page=users/promised&id={sub_id}")
+            if 'page=login' in html:
+                return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
+            # Если передали days — это POST для создания обещанного платежа
+            if days:
+                # Ищем форму и поля
+                all_inputs = {}
+                for m in re.finditer(r'<input([^>]*)>', html, re.IGNORECASE):
+                    tag_attrs = m.group(1)
+                    name_m = re.search(r'name=["\']([^"\']+)["\']', tag_attrs)
+                    val_m = re.search(r'value=["\']([^"\']*)["\']', tag_attrs)
+                    type_m = re.search(r'type=["\']([^"\']+)["\']', tag_attrs)
+                    if name_m:
+                        all_inputs[name_m.group(1)] = {
+                            "value": val_m.group(1) if val_m else "",
+                            "type": type_m.group(1).lower() if type_m else "text",
+                        }
+                post_fields = {k: v["value"] for k, v in all_inputs.items() if v["type"] == "hidden"}
+                # Поле дней
+                for name in all_inputs:
+                    nl = name.lower()
+                    if any(k in nl for k in ["day", "дн", "period", "срок"]):
+                        post_fields[name] = str(days)
+                        break
+                else:
+                    post_fields["days"] = str(days)
+                post_fields["id"] = sub_id
+                form_action_m = re.search(r'<form[^>]+action=["\']([^"\']*)["\']', html, re.IGNORECASE)
+                form_action = form_action_m.group(1) if form_action_m else ""
+                if form_action and form_action.startswith("?"):
+                    post_url = LB_BASE + form_action
+                else:
+                    post_url = promised_url
+                post_data = urllib.parse.urlencode(post_fields).encode("utf-8")
+                req_post = urllib.request.Request(post_url, data=post_data, method="POST")
+                req_post.add_header("Cookie", get_cookies())
+                req_post.add_header("User-Agent", "Mozilla/5.0")
+                req_post.add_header("Content-Type", "application/x-www-form-urlencoded")
+                req_post.add_header("Referer", promised_url)
+                with urllib.request.urlopen(req_post, timeout=15) as resp:
+                    resp_html = resp.read().decode("utf-8", errors="replace")
+                success = 'page=login' not in resp_html
+                return {
+                    "statusCode": 200,
+                    "headers": cors_headers,
+                    "body": json.dumps({"success": success, "sub_id": sub_id, "days": days}, ensure_ascii=False),
+                }
+            # GET: парсим форму — какие опции есть (кол-во дней)
+            options = []
+            select_m = re.search(r'<select[^>]*>(.*?)</select>', html, re.DOTALL | re.IGNORECASE)
+            if select_m:
+                for opt in re.finditer(r'<option[^>]*value=["\']?(\d+)["\']?[^>]*>([^<]+)', select_m.group(1)):
+                    options.append({"value": opt.group(1), "label": opt.group(2).strip()})
+            # Парсим текущий обещанный платёж если есть
+            current = ""
+            date_m = re.search(r'(\d{2}\.\d{2}\.\d{4})', html)
+            if date_m:
+                current = date_m.group(1)
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({"sub_id": sub_id, "options": options, "current_promised": current}, ensure_ascii=False),
+            }
+
+        elif action == "lb_payments":
+            # История платежей из LB: ?page=payments&operation=search&contract=CONTRACT
+            contract = params.get("contract", "")
+            sub_id = params.get("id", "")
+            if not contract and not sub_id:
+                return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "contract или id обязателен"})}
+            # Если только id — сначала получим договор из страницы абонента
+            if not contract and sub_id:
+                view_html = lb_request(f"?page=users/view&id={sub_id}")
+                contract_m = re.search(r'договор[^<]*<[^>]+>\s*([^\s<]+)', view_html, re.IGNORECASE)
+                if not contract_m:
+                    contract_m = re.search(r'contract[^<]*<[^>]+>\s*([^\s<]+)', view_html, re.IGNORECASE)
+                if contract_m:
+                    contract = contract_m.group(1).strip()
+            pay_html = lb_request(f"?page=payments&operation=search&contract={urllib.parse.quote(contract)}&back=%3Fpage%3Dusers%2Fview%26id%3D{sub_id}")
+            if 'page=login' in pay_html:
+                return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
+            # Парсим таблицу платежей
+            payments = []
+            table_m = re.search(r'<table[^>]*id=["\']keywords["\'][^>]*>(.*?)</table>', pay_html, re.DOTALL)
+            if not table_m:
+                table_m = re.search(r'<table[^>]*>(.*?)</table>', pay_html, re.DOTALL)
+            if table_m:
+                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_m.group(1), re.DOTALL)
+                header_done = False
+                for row in rows:
+                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                    texts = [strip_tags(c).strip() for c in cells]
+                    texts = [t for t in texts if t]
+                    if not texts:
+                        continue
+                    if not header_done:
+                        header_done = True
+                        continue
+                    if len(texts) >= 2:
+                        # Ищем дату, сумму, источник
+                        date_val = ""
+                        amount_val = ""
+                        source_val = ""
+                        comment_val = ""
+                        for t in texts:
+                            if re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
+                                date_val = t
+                            elif re.match(r'^-?\d+[\.,]?\d*$', t.replace(' ', '')) and not amount_val:
+                                amount_val = t
+                            elif not source_val and t and t != date_val and t != amount_val:
+                                source_val = t
+                            elif not comment_val and t and t not in (date_val, amount_val, source_val):
+                                comment_val = t
+                        if date_val or amount_val:
+                            payments.append({
+                                "date": date_val,
+                                "amount": amount_val,
+                                "source": source_val,
+                                "comment": comment_val,
+                                "raw": texts,
+                            })
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": json.dumps({"payments": payments, "contract": contract, "total": len(payments)}, ensure_ascii=False),
+            }
+
         else:
             return {
                 "statusCode": 400,

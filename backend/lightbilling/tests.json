@@ -7,6 +7,14 @@
       "expectedStatus": 200,
       "bodyMatcher": "partial",
       "expectedBody": {}
+    },
+    {
+      "name": "lb_payments action exists",
+      "method": "GET",
+      "path": "/?action=lb_payments&contract=000001",
+      "expectedStatus": 200,
+      "bodyMatcher": "partial",
+      "expectedBody": {}
     }
   ]
 }

@@ -41,6 +41,27 @@ export interface LBPaymentResult {
   message?: string;
 }
 
+export interface LBSubscriberTariff {
+  id: string;
+  name: string;
+  price: string;
+  date: string;
+}
+
+export interface LBPaymentHistory {
+  date: string;
+  amount: string;
+  source: string;
+  comment: string;
+  raw: string[];
+}
+
+export interface LBPromisedInfo {
+  sub_id: string;
+  options: { value: string; label: string }[];
+  current_promised: string;
+}
+
 interface UseLBReturn {
   loading: boolean;
   error: string | null;
@@ -59,6 +80,11 @@ interface UseLBReturn {
     contractNumber?: string;
   }) => Promise<LBCreateResult>;
   addPayment: (lbId: string, amount: number, comment?: string, contract?: string) => Promise<LBPaymentResult>;
+  getSubscriberTariffs: (lbId: string) => Promise<LBSubscriberTariff[]>;
+  addTariff: (lbId: string, tariffId: string) => Promise<{ success: boolean }>;
+  getPromisedInfo: (lbId: string) => Promise<LBPromisedInfo | null>;
+  makePromisedPayment: (lbId: string, days: string) => Promise<{ success: boolean }>;
+  getLBPayments: (contract: string, lbId?: string) => Promise<LBPaymentHistory[]>;
 }
 
 export function useLightBilling(): UseLBReturn {
@@ -159,8 +185,51 @@ export function useLightBilling(): UseLBReturn {
     }
   }, []);
 
+  const getSubscriberTariffs = useCallback(async (lbId: string): Promise<LBSubscriberTariff[]> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=subscriber_tariffs&id=${encodeURIComponent(lbId)}`);
+      const data = await res.json();
+      return data.tariffs || [];
+    } catch { return []; }
+  }, []);
+
+  const addTariff = useCallback(async (lbId: string, tariffId: string): Promise<{ success: boolean }> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=add_tariff&id=${encodeURIComponent(lbId)}&tariff_id=${encodeURIComponent(tariffId)}`);
+      const data = await res.json();
+      return { success: data.success ?? true };
+    } catch { return { success: false }; }
+  }, []);
+
+  const getPromisedInfo = useCallback(async (lbId: string): Promise<LBPromisedInfo | null> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=promised_payment&id=${encodeURIComponent(lbId)}`);
+      const data = await res.json();
+      return data as LBPromisedInfo;
+    } catch { return null; }
+  }, []);
+
+  const makePromisedPayment = useCallback(async (lbId: string, days: string): Promise<{ success: boolean }> => {
+    try {
+      const res = await fetch(`${LB_URL}?action=promised_payment&id=${encodeURIComponent(lbId)}&days=${encodeURIComponent(days)}`);
+      const data = await res.json();
+      return { success: data.success ?? false };
+    } catch { return { success: false }; }
+  }, []);
+
+  const getLBPayments = useCallback(async (contract: string, lbId?: string): Promise<LBPaymentHistory[]> => {
+    try {
+      const params = new URLSearchParams({ action: 'lb_payments', contract });
+      if (lbId) params.set('id', lbId);
+      const res = await fetch(`${LB_URL}?${params}`);
+      const data = await res.json();
+      return data.payments || [];
+    } catch { return []; }
+  }, []);
+
   return {
     loading, error, subscribers, total, tariffs,
     searchSubscribers, loadSubscribers, getDetail, loadTariffs, createSubscriber, addPayment,
+    getSubscriberTariffs, addTariff, getPromisedInfo, makePromisedPayment, getLBPayments,
   };
 }
