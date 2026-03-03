@@ -231,7 +231,7 @@ export interface CashRegister {
   isActive: boolean;
 }
 
-export type SaleStatus = 'completed' | 'refunded' | 'cancelled';
+export type SaleStatus = 'completed' | 'precheck' | 'refunded' | 'cancelled';
 
 export interface Sale {
   id: string;
@@ -243,9 +243,16 @@ export interface Sale {
   employeeId: string;
   subscriberId?: string;
   customerName: string;
+  customerPhone?: string;
   status: SaleStatus;
   date: string;
   createdAt: string;
+}
+
+export interface WorkType {
+  id: string;
+  name: string;
+  price: number;
 }
 
 export interface SaleItem {
@@ -256,12 +263,19 @@ export interface SaleItem {
   amount: number;
 }
 
+export interface WorkActMember {
+  employeeId: string;
+  ktu: number;
+}
+
 export interface WorkAct {
   id: string;
   officeId: string;
   number: string;
   employeeId: string;
+  members?: WorkActMember[];
   date: string;
+  object?: string;
   items: WorkActItem[];
   totalAmount: number;
   status: 'draft' | 'approved' | 'paid';
@@ -270,6 +284,7 @@ export interface WorkAct {
 }
 
 export interface WorkActItem {
+  workTypeId?: string;
   description: string;
   quantity: number;
   price: number;

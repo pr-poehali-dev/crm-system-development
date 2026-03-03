@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCRMStore } from '@/store/crmStore';
-import { Office } from '@/types/crm';
+import { Office, WorkType, ExpenseCategory } from '@/types/crm';
 import Icon from '@/components/ui/icon';
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -16,8 +16,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function Settings({ onOpenPanel, onClosePanel }: Props) {
-  const { offices, currentOfficeId, addOffice, updateOffice, deleteOffice, appSettings, updateAppSettings } = useCRMStore();
+  const {
+    offices, currentOfficeId, addOffice, updateOffice, deleteOffice,
+    appSettings, updateAppSettings,
+    workTypes, addWorkType, updateWorkType, deleteWorkType,
+    expenseCategories, addExpenseCategory, updateExpenseCategory, deleteExpenseCategory,
+  } = useCRMStore();
   const [promisedFee, setPromisedFee] = useState(String(appSettings.promisedPaymentFee));
+
+  const [newWtName, setNewWtName] = useState('');
+  const [newWtPrice, setNewWtPrice] = useState('');
+  const [newEcName, setNewEcName] = useState('');
 
   const openOfficeForm = (office?: Office) => {
     const isNew = !office;
@@ -140,6 +149,95 @@ export default function Settings({ onOpenPanel, onClosePanel }: Props) {
               <div className="text-xs text-[#4b5568]">{label}</div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Виды работ */}
+      <div>
+        <h2 className="text-base font-semibold text-white flex items-center gap-2 mb-4">
+          <Icon name="Wrench" size={16} className="text-[#3b82f6]" />
+          Виды работ
+        </h2>
+        <div className="bg-[#161b27] border border-[#252d3d] rounded-xl p-4 space-y-3">
+          {(workTypes || []).map((wt) => (
+            <div key={wt.id} className="flex items-center gap-2">
+              <span className="flex-1 text-sm text-white">{wt.name}</span>
+              <span className="text-sm text-[#10b981] font-semibold w-24 text-right">{wt.price.toLocaleString('ru-RU')} ₽</span>
+              <button onClick={() => deleteWorkType(wt.id)} className="p-1.5 hover:bg-[#ef4444]/20 rounded text-[#4b5568] hover:text-[#ef4444]">
+                <Icon name="Trash2" size={13} />
+              </button>
+            </div>
+          ))}
+          {(workTypes || []).length === 0 && (
+            <div className="text-sm text-[#4b5568] text-center py-3">Виды работ не добавлены</div>
+          )}
+          <div className="flex gap-2 pt-2 border-t border-[#252d3d]">
+            <input
+              value={newWtName}
+              onChange={e => setNewWtName(e.target.value)}
+              className={inputCls}
+              placeholder="Название работы"
+            />
+            <input
+              type="number"
+              value={newWtPrice}
+              onChange={e => setNewWtPrice(e.target.value)}
+              className={inputCls + ' w-32'}
+              placeholder="Цена, ₽"
+              min="0"
+            />
+            <button
+              onClick={() => {
+                if (!newWtName.trim() || !newWtPrice) return;
+                addWorkType({ id: uid(), name: newWtName.trim(), price: parseFloat(newWtPrice) || 0 });
+                setNewWtName('');
+                setNewWtPrice('');
+              }}
+              className="px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm transition-colors flex-shrink-0"
+            >
+              <Icon name="Plus" size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Статьи расходов */}
+      <div>
+        <h2 className="text-base font-semibold text-white flex items-center gap-2 mb-4">
+          <Icon name="Tag" size={16} className="text-[#3b82f6]" />
+          Статьи расходов
+        </h2>
+        <div className="bg-[#161b27] border border-[#252d3d] rounded-xl p-4 space-y-3">
+          {expenseCategories.map((ec) => (
+            <div key={ec.id} className="flex items-center gap-2">
+              <span className="flex-1 text-sm text-white">{ec.name}</span>
+              {ec.description && <span className="text-xs text-[#4b5568] truncate max-w-[160px]">{ec.description}</span>}
+              <button onClick={() => deleteExpenseCategory(ec.id)} className="p-1.5 hover:bg-[#ef4444]/20 rounded text-[#4b5568] hover:text-[#ef4444]">
+                <Icon name="Trash2" size={13} />
+              </button>
+            </div>
+          ))}
+          {expenseCategories.length === 0 && (
+            <div className="text-sm text-[#4b5568] text-center py-3">Статьи не добавлены</div>
+          )}
+          <div className="flex gap-2 pt-2 border-t border-[#252d3d]">
+            <input
+              value={newEcName}
+              onChange={e => setNewEcName(e.target.value)}
+              className={inputCls}
+              placeholder="Название статьи"
+            />
+            <button
+              onClick={() => {
+                if (!newEcName.trim()) return;
+                addExpenseCategory({ id: uid(), name: newEcName.trim() });
+                setNewEcName('');
+              }}
+              className="px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm transition-colors flex-shrink-0"
+            >
+              <Icon name="Plus" size={14} />
+            </button>
+          </div>
         </div>
       </div>
 

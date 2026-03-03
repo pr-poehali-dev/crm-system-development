@@ -79,7 +79,7 @@
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: transparent;
   }
 
   body {

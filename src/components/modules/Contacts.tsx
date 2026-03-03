@@ -242,16 +242,20 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
 
   useEffect(() => {
     if (source === 'lb') {
-      lb.loadSubscribers(601);
+      lb.loadSubscribers(2000);
     }
   }, [source]);
 
   useEffect(() => {
     if (source !== 'lb') return;
+    if (!search.trim()) {
+      lb.loadSubscribers(2000);
+      return;
+    }
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
-      lb.searchSubscribers(search, 601);
-    }, 400);
+      lb.searchSubscribers(search.trim(), 2000);
+    }, 350);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [search, source]);
 
@@ -259,11 +263,28 @@ export default function Contacts({ onOpenPanel, onClosePanel, onCreateTicket }: 
     ? lb.subscribers.map(lbToSubscriber)
     : localSubs;
 
-  const filtered = displaySubs.filter((s) => {
-    if (filter !== 'all' && s.status !== filter) return false;
-    if (source === 'local' && search && !`${s.fullName} ${s.contractNumber} ${s.phone} ${s.address}`.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
+  // Сортировка по номеру договора (от большего к меньшему)
+  const sortByContract = (arr: Subscriber[]) => [...arr].sort((a, b) => {
+    const numA = parseInt((a.contractNumber || '').replace(/\D/g, '')) || 0;
+    const numB = parseInt((b.contractNumber || '').replace(/\D/g, '')) || 0;
+    return numB - numA;
   });
+
+  const filtered = sortByContract(displaySubs.filter((s) => {
+    if (filter !== 'all' && s.status !== filter) return false;
+    if (source === 'local' && search.trim()) {
+      const q = search.trim().toLowerCase();
+      const fullNameLower = s.fullName.toLowerCase();
+      // Поиск по фамилии (первое слово) или по полному имени или по договору
+      const parts = fullNameLower.split(' ');
+      const lastName = parts[0] || '';
+      return lastName.startsWith(q)
+        || fullNameLower.includes(q)
+        || (s.contractNumber || '').toLowerCase().includes(q)
+        || (s.phone || '').includes(q);
+    }
+    return true;
+  }));
 
   const offRegisters = cashRegisters.filter((r) => r.officeId === currentOfficeId);
   const todayStr = new Date().toISOString().split('T')[0];

@@ -5,7 +5,7 @@ import {
   Connection, ServiceTicket, PaidCall, CalendarSlotSettings,
   Warehouse, Category, Product, StockOperation, WarehouseStock,
   CashRegister, Sale, WorkAct, Subscriber, SalarySheet, CRMEvent,
-  CashPayment, ExpenseCategory, Supplier,
+  CashPayment, ExpenseCategory, Supplier, WorkType,
 } from '../types/crm';
 
 interface CRMState {
@@ -25,6 +25,7 @@ interface CRMState {
   stockOperations: StockOperation[];
   warehouseStock: WarehouseStock[];
   suppliers: Supplier[];
+  workTypes: WorkType[];
   cashRegisters: CashRegister[];
   cashPayments: CashPayment[];
   expenseCategories: ExpenseCategory[];
@@ -85,6 +86,10 @@ interface CRMState {
   addSupplier: (s: Supplier) => void;
   updateSupplier: (id: string, data: Partial<Supplier>) => void;
   deleteSupplier: (id: string) => void;
+
+  addWorkType: (wt: WorkType) => void;
+  updateWorkType: (id: string, data: Partial<WorkType>) => void;
+  deleteWorkType: (id: string) => void;
 
   addCashRegister: (cr: CashRegister) => void;
   updateCashRegister: (id: string, data: Partial<CashRegister>) => void;
@@ -203,6 +208,7 @@ const INIT_EXPENSE_CATEGORIES: ExpenseCategory[] = [
 ];
 
 const INIT_SUPPLIERS: Supplier[] = [];
+const INIT_WORK_TYPES: WorkType[] = [];
 
 const INIT_WAREHOUSES: Warehouse[] = [
   { id: '1', officeId: '1', name: 'Основной склад', address: 'г. Абакан, ул. Ленина 1', description: 'Главный склад Абакан' },
@@ -248,6 +254,7 @@ export const useCRMStore = create<CRMState>()(
       stockOperations: [],
       warehouseStock: [],
       suppliers: INIT_SUPPLIERS,
+      workTypes: INIT_WORK_TYPES,
       cashRegisters: INIT_CASH_REGISTERS,
       cashPayments: [],
       expenseCategories: INIT_EXPENSE_CATEGORIES,
@@ -352,6 +359,10 @@ export const useCRMStore = create<CRMState>()(
       addSupplier: (s_) => set((s) => ({ suppliers: [...s.suppliers, s_] })),
       updateSupplier: (id, data) => set((s) => ({ suppliers: s.suppliers.map((sup) => sup.id === id ? { ...sup, ...data } : sup) })),
       deleteSupplier: (id) => set((s) => ({ suppliers: s.suppliers.filter((sup) => sup.id !== id) })),
+
+      addWorkType: (wt) => set((s) => ({ workTypes: [...s.workTypes, wt] })),
+      updateWorkType: (id, data) => set((s) => ({ workTypes: s.workTypes.map((w) => w.id === id ? { ...w, ...data } : w) })),
+      deleteWorkType: (id) => set((s) => ({ workTypes: s.workTypes.filter((w) => w.id !== id) })),
 
       addCashRegister: (cr) => set((s) => ({ cashRegisters: [...s.cashRegisters, cr] })),
       updateCashRegister: (id, data) => set((s) => ({ cashRegisters: s.cashRegisters.map((c) => c.id === id ? { ...c, ...data } : c) })),
