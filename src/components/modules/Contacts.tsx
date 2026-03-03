@@ -440,8 +440,9 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb, p
     const daysNum = parseInt(days) || 0;
     if (!daysNum || !tariffSum) return String(promisedPaymentFee);
     const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const result = Math.round((tariffSum / daysInMonth) * daysNum + promisedPaymentFee);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const remainingDays = lastDay - now.getDate() + 1;
+    const result = Math.round((tariffSum / remainingDays) * daysNum + promisedPaymentFee);
     return String(result);
   };
 
@@ -584,7 +585,7 @@ function SubscriberCard({ sub, lbId, onCreateTicket, onTopup, crmPayments, lb, p
                   Сумма ₽
                   {tariffSum > 0 && promisedDays && (
                     <span className="ml-1 normal-case font-normal text-muted-foreground">
-                      ({tariffSum} / {new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate()} дн × {promisedDays} + {promisedPaymentFee} комиссия)
+                      ({tariffSum} / {new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate() - new Date().getDate() + 1} ост. дн × {promisedDays} + {promisedPaymentFee} ком.)
                     </span>
                   )}
                 </label>

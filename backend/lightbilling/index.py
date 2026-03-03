@@ -803,117 +803,109 @@ def handler(event: dict, context) -> dict:
             }
 
         elif action == "subscriber_tariffs":
-            # Тарифы абонента со страницы users/user-tariff (список назначенных тарифов)
+            # Тарифы абонента со страницы users/view — там таблица назначенных тарифов с ценами
             sub_id = params.get("id", "")
             if not sub_id:
                 return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "id обязателен"})}
 
-            # Запрашиваем страницу управления тарифами абонента — там есть назначенные тарифы
-            tariff_page_html = lb_request(f"?page=users/user-tariff&id={sub_id}")
-            if 'page=login' in tariff_page_html:
+            view_html = lb_request(f"?page=users/view&id={sub_id}")
+            if 'page=login' in view_html:
                 return {"statusCode": 401, "headers": cors_headers, "body": json.dumps({"error": "Сессия истекла"})}
 
-            print(f"[subscriber_tariffs] tariff_page_html_len={len(tariff_page_html)}")
-            print(f"[subscriber_tariffs] preview={tariff_page_html[:1000]!r}")
+            print(f"[subscriber_tariffs] view_html_len={len(view_html)}")
 
             tariffs_found = []
 
-            # Парсим все таблицы на странице
-            # Ищем таблицу с назначенными тарифами — строки с кнопкой удаления (operation=del)
-            all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tariff_page_html, re.DOTALL)
-            for row in all_rows:
-                has_del = 'operation=del' in row or ('id_tariff=' in row and 'del' in row.lower())
-                if not has_del:
+            # На странице users/view ищем секцию тарифов
+            # Ищем таблицы на странице — берём ту, что содержит колонки с ценой/стоимостью
+            tables = re.findall(r'<table[^>]*>(.*?)</table>', view_html, re.DOTALL)
+            for table_html in tables:
+                all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL)
+                if not all_rows:
                     continue
-                t_id_m = re.search(r'id_tariff=(\d+)', row)
-                t_id = t_id_m.group(1) if t_id_m else ""
-                cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
-                raw_texts = [strip_tags(c).strip() for c in cells]
-                texts = [t for t in raw_texts if t and t not in ('', '-', '×', 'x', 'X')]
-
-                print(f"[subscriber_tariffs] row texts={texts} t_id={t_id!r}")
-
-                if not texts:
-                    continue
-
-                # Определяем название и цену из ячеек
-                name = ""
-                price = ""
-                date_val = ""
-                for t in texts:
-                    clean = t.replace(',', '.').replace(' ', '').replace('\xa0', '').replace('\u2009', '')
-                    # Если похоже на число — это цена
-                    if re.match(r'^-?\d+\.?\d{0,2}$', clean) and not price:
-                        price = t
-                    # Если дата
-                    elif re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
-                        date_val = t
-                    # Иначе — название (берём первый непустой не-числовой текст)
-                    elif not name and not re.match(r'^-?\d+[\.,]?\d*$', clean):
-                        name = t
-
-                if not name and texts:
-                    name = texts[0]
-
-                tariffs_found.append({
-                    "id": t_id,
-                    "name": name,
-                    "price": price,
-                    "date": date_val,
-                    "raw": texts,
-                })
-
-            # Если не нашли через operation=del — ищем строки с id_tariff= в таблице назначенных
-            if not tariffs_found:
+                # Парсим заголовки
+                headers = []
+                data_rows = []
                 for row in all_rows:
-                    if 'id_tariff=' not in row:
+                    th_cells = re.findall(r'<th[^>]*>(.*?)</th>', row, re.DOTALL)
+                    td_cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+                    if th_cells and not headers:
+                        headers = [strip_tags(c).strip().lower() for c in th_cells]
+                    elif td_cells:
+                        data_rows.append(td_cells)
+                if not data_rows:
+                    continue
+                # Проверяем что это таблица тарифов — в заголовках должно быть "тариф", "стоим", "сумм", "price", "name"
+                hdr_str = ' '.join(headers)
+                is_tariff_table = any(k in hdr_str for k in ['тариф', 'tariff', 'стоим', 'price', 'сумм', 'name', 'наим'])
+                if not is_tariff_table:
+                    continue
+
+                print(f"[subscriber_tariffs] tariff table headers={headers}")
+
+                # Находим индексы нужных колонок
+                name_idx = -1
+                price_idx = -1
+                date_idx = -1
+                for i, h in enumerate(headers):
+                    if any(k in h for k in ['тариф', 'tariff', 'наим', 'name', 'услуг']) and name_idx < 0:
+                        name_idx = i
+                    if any(k in h for k in ['стоим', 'сумм', 'price', 'amount', 'цена']) and price_idx < 0:
+                        price_idx = i
+                    if any(k in h for k in ['дат', 'date', 'период']) and date_idx < 0:
+                        date_idx = i
+
+                for cells in data_rows:
+                    texts = [strip_tags(c).strip() for c in cells]
+                    if not any(t for t in texts if len(t) > 1):
                         continue
-                    t_id_m = re.search(r'id_tariff=(\d+)', row)
-                    t_id = t_id_m.group(1) if t_id_m else ""
+                    name = texts[name_idx] if name_idx >= 0 and name_idx < len(texts) else ""
+                    price = texts[price_idx] if price_idx >= 0 and price_idx < len(texts) else ""
+                    date_val = texts[date_idx] if date_idx >= 0 and date_idx < len(texts) else ""
+                    if not name:
+                        # берём первый непустой текст как имя
+                        name = next((t for t in texts if t and not re.match(r'^\d+[\.,]?\d*$', t.replace('\xa0','').replace('\u2009','').replace(' ',''))), "")
+                    # Нормализуем цену
+                    if price:
+                        price_clean = re.sub(r'[\s\xa0\u2009\u202f]', '', price).replace(',', '.')
+                        price_clean = re.sub(r'[^\d.]', '', price_clean)
+                        if price_clean:
+                            try:
+                                price = str(float(price_clean))
+                            except:
+                                pass
+                    tariffs_found.append({
+                        "id": "",
+                        "name": name,
+                        "price": price,
+                        "date": date_val,
+                        "raw": texts,
+                    })
+
+            # Если таблица не нашлась по заголовкам — fallback: ищем строки с ценами рядом с тарифом
+            if not tariffs_found:
+                # Ищем паттерн: тариф + цена в тексте страницы
+                # Паттерн вида: <td>Название тарифа</td><td>500.00</td>
+                all_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', view_html, re.DOTALL)
+                for row in all_rows:
                     cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
                     texts = [strip_tags(c).strip() for c in cells]
-                    texts = [t for t in texts if t and len(t) > 1]
-                    if not texts:
+                    texts = [t for t in texts if t]
+                    if len(texts) < 2:
                         continue
-                    name = ""
-                    price = ""
-                    date_val = ""
+                    # Ищем строки где есть текст + число (цена)
+                    has_price = False
+                    price_val = ""
+                    name_val = ""
                     for t in texts:
-                        clean = t.replace(',', '.').replace(' ', '').replace('\xa0', '')
-                        if re.match(r'^-?\d+\.?\d{0,2}$', clean) and not price:
-                            price = t
-                        elif re.match(r'\d{2}\.\d{2}\.\d{4}', t) and not date_val:
-                            date_val = t
-                        elif not name and not re.match(r'^[\d\.\-]+$', clean):
-                            name = t
-                    if not name and texts:
-                        name = texts[0]
-                    if name or t_id:
-                        tariffs_found.append({"id": t_id, "name": name, "price": price, "date": date_val, "raw": texts})
-
-            # Если нашли тарифы, пробуем обогатить их ценой из глобального списка тарифов
-            # (страница ?page=users/user-tariff содержит select со всеми тарифами и их ценами)
-            tariff_prices = {}
-            # Ищем select с тарифами на этой же странице
-            select_m = re.search(r'<select[^>]*name=["\']id_tariff["\'][^>]*>(.*?)</select>', tariff_page_html, re.DOTALL | re.IGNORECASE)
-            if select_m:
-                for opt in re.finditer(r'<option[^>]*value=["\']?(\d+)["\']?[^>]*>([^<]+)', select_m.group(1)):
-                    opt_id = opt.group(1)
-                    opt_label = opt.group(2).strip()
-                    # Пробуем извлечь цену из названия: "Домашний 100 (500 руб)" или "Тариф - 500"
-                    price_m = re.search(r'[\(\-\s]([\d]+(?:[.,]\d+)?)\s*(?:руб|₽|р\.)?[\)\s]', opt_label)
-                    if price_m:
-                        tariff_prices[opt_id] = price_m.group(1)
-                    tariff_prices[f"name_{opt_id}"] = opt_label
-
-            # Обогащаем найденные тарифы именами и ценами из select
-            for t in tariffs_found:
-                tid = t["id"]
-                if tid:
-                    if not t["name"] or t["name"] == tid:
-                        t["name"] = tariff_prices.get(f"name_{tid}", t["name"] or f"Тариф #{tid}")
-                    if not t["price"] and tid in tariff_prices:
-                        t["price"] = tariff_prices[tid]
+                        c = re.sub(r'[\s\xa0\u2009]', '', t).replace(',', '.')
+                        if re.match(r'^\d{3,}\.?\d{0,2}$', c) and not has_price:
+                            has_price = True
+                            price_val = t
+                        elif not name_val and not re.match(r'^\d+', t) and len(t) > 3:
+                            name_val = t
+                    if has_price and name_val:
+                        tariffs_found.append({"id": "", "name": name_val, "price": price_val, "date": "", "raw": texts})
 
             print(f"[subscriber_tariffs] final found={len(tariffs_found)}")
             if tariffs_found:
@@ -1150,32 +1142,41 @@ def handler(event: dict, context) -> dict:
                     elif td_cells:
                         data_rows.append(td_cells)
 
+                # Определяем индекс колонки суммы — ищем пустой заголовок после даты/договора
+                # Структура LB payments: [#, дата, договор|логин, СУММА(пустой), оператор, комментарий, ...]
+                amount_idx = -1
+                date_idx = -1
+                operator_idx = -1
+                comment_idx = -1
+                for idx, h in enumerate(headers):
+                    if any(k in h for k in ["дат", "date", "врем", "time"]) and date_idx < 0:
+                        date_idx = idx
+                    elif any(k in h for k in ["сумм", "sum", "amount", "платёж"]) and amount_idx < 0:
+                        amount_idx = idx
+                    elif any(k in h for k in ["оператор", "operator", "кассир", "менедж"]) and operator_idx < 0:
+                        operator_idx = idx
+                    elif any(k in h for k in ["коммент", "comment", "примечан", "note"]) and comment_idx < 0:
+                        comment_idx = idx
+                # Если сумму не нашли по заголовку — ищем первый пустой заголовок после даты
+                if amount_idx < 0 and date_idx >= 0:
+                    for idx in range(date_idx + 1, len(headers)):
+                        if not headers[idx].strip():
+                            amount_idx = idx
+                            break
+                # Если всё ещё не нашли — берём позицию 3 (стандартная структура LB)
+                if amount_idx < 0:
+                    amount_idx = 3
+
                 for cells in data_rows:
                     texts = [strip_tags(c).strip() for c in cells]
                     if not any(texts):
                         continue
-                    # Если есть заголовки — сопоставляем по позиции
-                    date_val = ""
-                    amount_val = ""
-                    operator_val = ""
-                    comment_val = ""
-                    if headers:
-                        for idx, h in enumerate(headers):
-                            if idx >= len(texts):
-                                break
-                            val = texts[idx]
-                            if not val:
-                                continue
-                            if any(k in h for k in ["дат", "date", "врем", "time"]) and not date_val:
-                                date_val = val
-                            elif any(k in h for k in ["сумм", "sum", "amount", "платёж", "payment"]) and not amount_val:
-                                amount_val = val
-                            elif any(k in h for k in ["оператор", "operator", "кассир", "кто", "менедж", "manager", "user"]) and not operator_val:
-                                operator_val = val
-                            elif any(k in h for k in ["коммент", "comment", "примечан", "note", "описан"]) and not comment_val:
-                                comment_val = val
-                    # Fallback: определяем по содержимому
-                    if not date_val and not amount_val:
+                    date_val = texts[date_idx] if date_idx >= 0 and date_idx < len(texts) else ""
+                    amount_val = texts[amount_idx] if amount_idx >= 0 and amount_idx < len(texts) else ""
+                    operator_val = texts[operator_idx] if operator_idx >= 0 and operator_idx < len(texts) else ""
+                    comment_val = texts[comment_idx] if comment_idx >= 0 and comment_idx < len(texts) else ""
+                    # Fallback: если что-то не нашли — определяем по содержимому
+                    if not date_val or not amount_val:
                         for t in texts:
                             if not t:
                                 continue
@@ -1184,10 +1185,8 @@ def handler(event: dict, context) -> dict:
                                 date_val = t
                             elif re.match(r'^-?\d+\.?\d*$', t_clean) and not amount_val:
                                 amount_val = t
-                            elif not operator_val and t and t not in (date_val, amount_val):
+                            elif not operator_val and t and t not in (date_val, amount_val) and not re.match(r'^\d+$', t):
                                 operator_val = t
-                            elif not comment_val and t and t not in (date_val, amount_val, operator_val):
-                                comment_val = t
 
                     # Нормализуем сумму — убираем все пробелы и неразрывные символы
                     amount_clean = re.sub(r'[\s\xa0\u2009\u202f]', '', amount_val).replace(',', '.') if amount_val else ""
